@@ -1,9 +1,9 @@
 module fsm(
-    input clk, rst, beg,
+    input clk, rst, bgn,
     input write,
     input read,
     input hit, miss,
-    input free,
+    input full,
     output reg c0,c1,c2,c3,c4,c5,c6,c7
 );
 
@@ -40,7 +40,7 @@ always @(*) begin
     case(st)
         IDLE : begin
             if(bgn == 1'b0)begin
-                nxt_state <= IDLE;
+                nxt_st <= IDLE;
             end
             else begin
 		if(read == 1'b1) begin
@@ -202,63 +202,30 @@ reg [1:0] st, st_next;
 
  always @(posedge clk,negedge rst) begin
 
-        if(tag == tags_cache[index]) begin
-            temp_tag[0] <= 1'b1;
-        end
-        else begin
-            temp_tag[0] <= 1'b0;
-        end
-        //tag for set 3
-        if(tag == tags_cache[128+index]) begin
-            temp_tag[1] <= 1'b1;
-        end
-        else begin
-            temp_tag[1] <= 1'b0;
-        end
-        //tag for set 2
-        if(tag == tags_cache[2*128+index]) begin
-            temp_tag[2] <= 1'b1;
-        end
-        else begin
-            temp_tag[2] <= 1'b0;
-        end
-        //tag for set 1
-        if(tag == tags_cache[3*128+index]) begin
-            
-            temp_tag[3] <= 1'b1;
-        end
-        else begin
-            temp_tag[3] <= 1'b0;
-        end
+	   for(i=0; i < CACHE_TYPE; i = i + 1) begin: gen_temp_tag
+		if(tag == tags_cache[NO_SETS * i + index]) begin
+			temp_tag[i] <= 1'b1;
+		end
+		else begin
+			temp_tag[i] <= 1'b0;
+		end
+           end
 
-        //AND operations between comparator and valid
-        temp_and_values[3] <= temp_tag[3] && valid[3*128+index];
-        temp_and_values[2] <= temp_tag[2] && valid[2*128+index];
-        temp_and_values[1] <= temp_tag[1] && valid[128+index];
-        temp_and_values[0] <= temp_tag[0] && valid[index];
 
+	   for(i=CACHE_TYPE-1; i>=0; i = i-1) begin: gen_tempvalues_temphit
+		temp_and_values[i] <= temp_tag[i] && valid[i*NO_SETS+index];
+		temp_hit <= temp_hit || temp_and_values[i];
+	   end
          
-        //OR operation between AND gates
-        temp_hit <= temp_and_values[0] || temp_and_values[1] || temp_and_values[2] || temp_and_values[3];
-
-
+	
         //MUX 4:1
-        if(temp_and_values[3] == 1'b1) begin
-            data_from_cache <= data_cache[3*128+index][511:0];
-        end
-        if(temp_and_values[2] == 1'b1) begin
-            data_from_cache <= data_cache[2*128+index][511:0];
-            
-        end
-        if(temp_and_values[1] == 1'b1) begin
-            data_from_cache <= data_cache[128+index][511:0];
-            
-        end
-        if(temp_and_values[0] == 1'b1) begin
-            data_from_cache <= data_cache[index][511:0]; 
-        end
-        
-    end
+	   for(i = CACHE_TYPE - 1; i >= 0; i = i - 1) begin: gen_tempvalues
+		if(temp_and_values[i] == 1'b1) begin
+		   data_from_cache <= data_cache[i*NO_SETS+index][NO_SETS*CACHE_TYPE-1:0];
+		end
+	   end
+                
+end
 
 always @(posedge clk,negedge rst) begin
         hit <= 1'b0;
@@ -268,15 +235,13 @@ always @(posedge clk,negedge rst) begin
 
             valid <= 512'b0;
 
-            for (i = 0; i < 128; i = i + 1) begin
+            for (i = 0; i < NO_SETS; i = i + 1) begin
                 lru[i] <= 12'b100100100100;
                    
             end
         end
         else begin
-            if(st == ) begin //read
-
-
+            if(c1 == 1'b1) begin //read
                 if(temp_hit == 4'b0) begin
                     hit <= 1'b0;
 		    miss <= 1'b1;
@@ -286,28 +251,17 @@ always @(posedge clk,negedge rst) begin
 		    miss <= 1'b1;		    
 
                     //for dirty bit when you get the second hit from the same data
-                    //set1
-                    if(temp_and_values[3] == 1'b1 && dirty_bits[index][3] == 1'b0) begin
-                        dirty_bits[index][3] <= 1'b1;
-                    end
-                    //set2
-                    if(temp_and_values[2] == 1'b1 && dirty_bits[index][2] == 1'b0) begin
-                        dirty_bits[index][2] <= 1'b1;               
-                    end
-                    //set3
-                    if(temp_and_values[1] == 1'b1 && dirty_bits[index][1] == 1'b0) begin
-                        dirty_bits[index][1] <= 1'b1;
-                    end
-                    //set4
-                    if(temp_and_values[0] == 1'b1 && dirty_bits[index][0] == 1'b0) begin
-                        dirty_bits[index][0] <= 1'b1;
-                    end
+			for(i = CACHE_TYPE - 1; i>=0; i = i-1) begin
+				if(temp_and_values[i] == 1'b1 && dirty_bits[index][i] == 1'b0) begin
+                        		dirty_bits[index][i] <= 1'b1;
+				end
+			end
                 end
 
                 dirty <= dirty_bits[index];
 
                 if(c3 == 1'b1) begin
-                    outbus <= data_from_cache;
+                    read_data <= data_from_cache;
                 end
 
                 and_val <= temp_and_values; // shows in which set was stored data
@@ -325,25 +279,15 @@ always @(posedge clk,negedge rst) begin
                     //for dirty bit when you get the second hit from the same data 
                     //and when you need to send data to the main memory
                     //set1
-                    if(temp_and_values[3] == 1'b1 && dirty_bits[index][3] == 1'b0 && c3 == 1'b1) begin
-                        dirty_bits[index][3] <= 1'b1;
-                        read_data <= data_from_cache;
-                    end
-                    //set2
-                    if(temp_and_values[2] == 1'b1 && dirty_bits[index][2] == 1'b0 && c3 == 1'b1) begin
-                        dirty_bits[index][2] <= 1'b1;
-                        read_data <= data_from_cache;               
-                    end
-                    //set3
-                    if(temp_and_values[1] == 1'b1 && dirty_bits[index][1] == 1'b0 && c3 == 1'b1) begin
-                        dirty_bits[index][1] <= 1'b1;
-                        read_data <= data_from_cache;
-                    end
-                    //set4
-                    if(temp_and_values[0] == 1'b1 && dirty_bits[index][0] == 1'b0 && c3 == 1'b1) begin
-                        dirty_bits[index][0] <= 1'b1;
-                        read_data <= data_from_cache;
-                    end
+
+		
+		    for(i = CACHE_TYPE - 1; i >= 0; i = i-1) begin
+			if(temp_and_values[i] == 1'b1 && dirty_bits[index][i] == 1'b0 && c3 == 1'b1) begin
+                        	dirty_bits[index][i] <= 1'b1;
+                        	read_data <= data_from_cache;
+                    	end
+		    end
+                    
                     dirty <= dirty_bits[index];
                 end
 
@@ -352,32 +296,31 @@ always @(posedge clk,negedge rst) begin
             end
             if(c6 == 1'b1) begin //Load the date into the cache
                 
-
                 if(pos_for_new_data == 2'b11) begin
                     lru[index][11:9] <= 3'b000;
                     dirty_bits[index][3] <= 1'b0;
-                    data_cache[3*128+index] <= data;
+                    data_cache[3*128+index] <= data_to_write;
                     tags_cache[3*128+index] <= tag;
                     valid[3*128+index] <= 1'b1;
                 end
                 else if(pos_for_new_data == 2'b10) begin
                     lru[index][8:6] <= 3'b000;
                     dirty_bits[index][2] <= 1'b0;
-                    data_cache[2*128+index] <= data;
+                    data_cache[2*128+index] <= data_to_write;
                     tags_cache[2*128+index] <= tag;
                     valid[2*128+index] <= 1'b1;
                 end
                 else if(pos_for_new_data == 2'b01) begin
                     lru[index][5:3] <= 3'b000;
                     dirty_bits[index][1] <= 1'b0;
-                    data_cache[128+index] <= data;
+                    data_cache[128+index] <= data_to_write;
                     tags_cache[128+index] <= tag;
                     valid[128+index] <= 1'b1;
                 end
                 else if(pos_for_new_data == 2'b00) begin
                     lru[index][2:0] <= 3'b000;
                     dirty_bits[index][0] <= 1'b0;
-                    data_cache[index] <= data;
+                    data_cache[index] <= data_to_write;
                     tags_cache[index] <= tag;
                     valid[index] <= 1'b1;
                 end
@@ -386,7 +329,6 @@ always @(posedge clk,negedge rst) begin
 
         end
     end
-
 	
 endmodule
 
