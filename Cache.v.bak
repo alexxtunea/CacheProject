@@ -116,7 +116,7 @@ always @(posedge clk) begin
 			miss <= 0;
 		end
 		READ_HIT: begin
-		    offset = address[OFFSET_BITS-1:0];
+		    offset = address[OFFSET_BITS-1:2];
                     read_data <= data_cache[index][way_set][offset];
                     hit <= 1;
                     free <= 1;
@@ -135,7 +135,7 @@ always @(posedge clk) begin
 
                     #10;  // Simulate memory fetch delay
 		    index = address[OFFSET_BITS + INDEX_BITS - 1 : OFFSET_BITS];
-                    offset = address[OFFSET_BITS-1:0];
+                    offset = address[OFFSET_BITS-1:2];
                     tag = address[31 : 32 - TAG_BITS];
 
                     // Find an empty way or LRU way
@@ -170,7 +170,7 @@ always @(posedge clk) begin
                     lru[index][way_set] = 0;
 		end
 		WRITE_HIT: begin
-		    offset = address[OFFSET_BITS-1:0];
+		    offset = address[OFFSET_BITS-1:2];
                     data_cache[index][way_set][offset] <= data_to_write;
 		    dirty_bits[index][way_set] <= 1;
                     hit <= 1;
@@ -190,7 +190,7 @@ always @(posedge clk) begin
 
                     #10;  // Simulate memory fetch delay
 		    index = address[OFFSET_BITS + INDEX_BITS - 1 : OFFSET_BITS];
-                    offset = address[OFFSET_BITS-1:0];
+                    offset = address[OFFSET_BITS-1:2];
                     tag = address[31 : 32 - TAG_BITS];
 
                     // Find an empty way or LRU way
@@ -279,38 +279,44 @@ module Cache_tb;
     );
 
     initial begin
-        clk = 0;
-        rst = 1;
-        #10 rst = 0;
+    clk = 0;
+    rst = 1;
+    #10 rst = 0;
 
-        // Read miss case
-        read = 1;
-        write = 0;
-        address = 32'h0000_0000;
-        #20;
+    // Write miss case
+    write = 1;
+    read = 0;
+    address = 32'h00000004;
+    data_to_write = 32'hDEADBEEF;
+    #50;
+    write = 0;
+    #20;
 
-        // Read hit case
-        read = 1;
-        write = 0;
-        address = 32'h0000_0000;
-        #20;
+    // Write hit case
+    write = 1;
+    address = 32'h00000004;
+    data_to_write = 32'hCAFEBABE;
+    #50;
+    write = 0;
+    #20;
 
-        // Write miss case
-        read = 0;
-        write = 1;
-        address = 32'h0000_0004;
-        data_to_write = 32'hDEAD_BEEF;
-        #20;
+    // Read miss case (timp suficient pentru FSM s? proceseze)
+    read = 1;
+    write = 0;
+    address = 32'h00000000;
+    #50; // 5 cicluri de ceas (asumând clk cu perioad? de 10)
+    read = 0;
+    #20;
 
-        // Write hit case
-        read = 0;
-        write = 1;
-        address = 32'h0000_0004;
-        data_to_write = 32'hCAFE_BABE;
-        #20;
+    // Read hit case
+    read = 1;
+    address = 32'h00000004;
+    #50;
+    read = 0;
+    #20;
 
-        $stop;
-    end
+end
+
 
     always #5 clk = ~clk;
 endmodule
