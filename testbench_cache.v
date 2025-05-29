@@ -71,7 +71,7 @@ endmodule
 
 
 //============================
-// Cache.v (FULLY IMPLEMENTED with Fixes)
+// Cache.v
 //============================
 
 module Cache #(
@@ -89,7 +89,7 @@ module Cache #(
     output reg [511:0] read_data,
     output reg [3:0] dirty,
     output reg [3:0] and_val,
-    output reg hit, miss, free, ask_for_data
+    output reg hit, miss, full, ask_for_data
 );
 
     localparam OFFSET_BITS = $clog2(BLOCK_SIZE);
@@ -109,6 +109,8 @@ module Cache #(
     reg found;
     reg [1:0] hit_index;
     reg [1:0] replace_index;
+
+    reg [511:0] simulated_memory_data;
 
     always @(*) begin
         hit = 0;
@@ -140,37 +142,35 @@ module Cache #(
             read_data <= 0;
             dirty <= 4'b0000;
             and_val <= 4'b0000;
-            free <= 1;
+            full <= 0;
+            simulated_memory_data <= 512'h123456ABCD;
         end else begin
             dirty <= 4'b0000;
             read_data <= 0;
             ask_for_data <= 0;
-            if (c1 || c2) begin
-                if (hit) begin
-                    read_data <= data_array[index][hit_index];
-                    dirty <= {dirty_array[index][3], dirty_array[index][2], dirty_array[index][1], dirty_array[index][0]};
-                    if (c3 && write) dirty_array[index][hit_index] <= 1;
-                    if (c3) begin
-                        for (i = 0; i < ASSOCIATIVITY; i = i + 1)
-                            if (lru_counter[index][i] < lru_counter[index][hit_index])
-                                lru_counter[index][i] <= lru_counter[index][i] + 1;
-                        lru_counter[index][hit_index] <= 0;
-                    end
-                end else if (miss) begin
-                    ask_for_data <= 1;
-                end
+
+            if ((c1 || c2) && hit && c3) begin
+                read_data <= data_array[index][hit_index];
+                dirty <= {dirty_array[index][3], dirty_array[index][2], dirty_array[index][1], dirty_array[index][0]};
+                if (write) dirty_array[index][hit_index] <= 1;
+                for (i = 0; i < ASSOCIATIVITY; i = i + 1)
+                    if (lru_counter[index][i] < lru_counter[index][hit_index])
+                        lru_counter[index][i] <= lru_counter[index][i] + 1;
+                lru_counter[index][hit_index] <= 0;
             end
 
-            if (c5) begin
-                free <= 0;
-                for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
-                    if (!valid_array[index][i]) begin
-                        replace_index = i;
-                        free <= 1;
-                    end
+            if (c4) begin
+                ask_for_data <= 1;
+                simulated_memory_data <= {16{address}};
+		read_data <= simulated_memory_data;
+            end
+
+            // Recalculate full every cycle
+            full <= 1;
+            for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                if (!valid_array[index][i]) begin
+                    full <= 0;
                 end
-            end else begin
-                free <= 0;
             end
 
             if (c7) begin
@@ -180,7 +180,7 @@ module Cache #(
             end
 
             if (c6) begin
-                data_array[index][replace_index] <= data_to_write;
+                data_array[index][replace_index] <= simulated_memory_data;
                 tag_array[index][replace_index] <= tag;
                 valid_array[index][replace_index] <= 1;
                 dirty_array[index][replace_index] <= write;
@@ -208,59 +208,76 @@ module tb;
     reg [511:0] data_to_write;
     wire [511:0] read_data;
     wire [3:0] dirty, and_val;
-    wire free, ask_for_data;
+    wire ask_for_data;
 
+    integer cycle_count = 0;
     integer hit_count = 0;
     integer miss_count = 0;
 
     fsm uut_fsm (
         .clk(clk), .rst(rst), .bgn(bgn),
         .write(write), .read(read),
-        .hit(hit), .miss(miss), .full(!free),
-        .c0(c0), .c1(c1), .c2(c2), .c3(c3), .c4(c4), .c5(c5), .c6(c6), .c7(c7)
+        .hit(hit), .miss(miss), .full(full),
+        .c0(c0), .c1(c1), .c2(c2), .c3(c3),
+        .c4(c4), .c5(c5), .c6(c6), .c7(c7)
     );
 
     Cache uut_cache (
         .clk(clk), .rst(rst),
-        .c0(c0), .c1(c1), .c2(c2), .c3(c3), .c4(c4), .c5(c5), .c6(c6), .c7(c7),
+        .c0(c0), .c1(c1), .c2(c2), .c3(c3),
+        .c4(c4), .c5(c5), .c6(c6), .c7(c7),
         .address(address), .data_to_write(data_to_write),
         .read(read), .write(write),
-        .read_data(read_data), .dirty(dirty), .and_val(and_val),
-        .hit(hit), .miss(miss), .free(free), .ask_for_data(ask_for_data)
+        .read_data(read_data), .dirty(dirty),
+        .and_val(and_val), .hit(hit), .miss(miss),
+        .full(full), .ask_for_data(ask_for_data)
     );
 
     always #5 clk = ~clk;
 
     always @(posedge clk) begin
+        cycle_count = cycle_count + 1;
         if (hit) hit_count = hit_count + 1;
         if (miss) miss_count = miss_count + 1;
+        $display("Cycle: %0d | HIT: %b | MISS: %b | FULL: %b | ASK: %b | READ_DATA: %h | DIRTY: %b",
+                 cycle_count, hit, miss, full, ask_for_data, read_data, dirty);
     end
 
     initial begin
-        clk = 0; rst = 1; bgn = 0; write = 0; read = 0;
+        clk = 0;
+        rst = 1;
+        bgn = 0;
+        read = 0;
+        write = 0;
         address = 0;
-        data_to_write = 512'hA5A5_A5A5_A5A5_A5A5_A5A5_A5A5_A5A5_A5A5;
+        data_to_write = 512'hFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACE;
 
-        #10 rst = 0;
-        #10 bgn = 1; read = 1; address = 32'h00000000; #100; bgn = 0; read = 0;
-        #20 bgn = 1; read = 1; address = 32'h00000000; #100; bgn = 0; read = 0;
-        #20 bgn = 1; write = 1; address = 32'h00001000;
-             data_to_write = 512'hDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF;
-             #100; bgn = 0; write = 0;
-        #20 bgn = 1; read = 1; address = 32'h00001000; #100; bgn = 0; read = 0;
-        #20 bgn = 1; write = 1; address = 32'h00002000;
-             data_to_write = 512'hCAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE;
-             #100; bgn = 0; write = 0;
-        #20 bgn = 1; read = 1; address = 32'h00002000; #100; bgn = 0; read = 0;
-        #20 bgn = 1; read = 1; address = 32'h0000F000; #100; bgn = 0; read = 0;
-        #20 bgn = 1; write = 1; address = 32'h00001000;
-             data_to_write = 512'hBADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE;
-             #100; bgn = 0; write = 0;
-        #20 bgn = 1; read = 1; address = 32'h00001000; #100; bgn = 0; read = 0;
+        #20 rst = 0;
+
+        repeat (4) begin
+            @(posedge clk);
+            address = {19'd100 + cycle_count, 7'd0, 6'd0};
+            data_to_write = {64{cycle_count[7:0]}};
+            bgn = 1; write = 1;
+            #150;
+            bgn = 0; write = 0;
+        end
+
+        @(posedge clk);
+        address = {19'd200, 7'd0, 6'd0};
+        data_to_write = 512'hDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD;
+        bgn = 1; write = 1;
+        #150; bgn = 0; write = 0;
+
+        @(posedge clk);
+        address = {19'd101, 7'd0, 6'd0};
+        bgn = 1; read = 1;
+        #150; bgn = 0; read = 0;
 
         #20;
-        $display("Hit count: %0d", hit_count);
-        $display("Miss count: %0d", miss_count);
+        $display("Simulation Finished");
+        $display("Total Hits: %0d | Total Misses: %0d", hit_count, miss_count);
+        $finish;
     end
 endmodule
 
