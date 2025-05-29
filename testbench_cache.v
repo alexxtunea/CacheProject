@@ -1,0 +1,138 @@
+`include "Cache.v"
+
+module tb;
+    // semnale de baz?
+    reg clk, rst, bgn;
+    reg write, read;
+    wire hit, miss;
+    wire full;
+    // semnale de control de la FSM
+    wire c0, c1, c2, c3, c4, c5, c6, c7;
+    // alte semnale pentru cache
+    reg [31:0] address;
+    reg [511:0] data_to_write;
+    wire [511:0] read_data;
+    wire [3:0] dirty, and_val;
+    wire free, ask_for_data;
+    // instan?iere FSM
+    fsm uut_fsm (
+        .clk(clk),
+        .rst(rst),
+        .bgn(bgn),
+        .write(write),
+        .read(read),
+        .hit(hit),
+        .miss(miss),
+        .full(full),
+        .c0(c0),
+        .c1(c1),
+        .c2(c2),
+        .c3(c3),
+        .c4(c4),
+        .c5(c5),
+        .c6(c6),
+        .c7(c7)
+    );
+    // instan?iere Cache
+    Cache uut_cache (
+        .clk(clk),
+        .rst(rst),
+        .c0(c0),
+        .c1(c1),
+        .c2(c2),
+        .c3(c3),
+        .c4(c4),
+        .c5(c5),
+        .c6(c6),
+        .c7(c7),
+        .address(address),
+        .data_to_write(data_to_write),
+        .read(read),
+        .write(write),
+        .read_data(read_data),
+        .dirty(dirty),
+        .and_val(and_val),
+        .hit(hit),
+        .miss(miss),
+        .free(free),
+        .ask_for_data(ask_for_data)
+    );
+
+    // clk generator
+    always #5 clk = ~clk;
+
+    initial begin
+    // Ini?ializare semnale
+    clk = 0;
+    rst = 1;
+    bgn = 0;
+    write = 0;
+    read = 0;
+    address = 32'h00000000;
+    data_to_write = 512'hA5A5_A5A5_A5A5_A5A5_A5A5_A5A5_A5A5_A5A5;
+
+    // Reset activ timp de 10 unit??i
+    #10 rst = 0;
+
+    // === Caz 1: Citire de la o adres? goal? (ar trebui s? fie MISS) ===
+    #10;
+    bgn = 1; read = 1; address = 32'h00000000;
+    #100;
+    bgn = 0; read = 0;
+
+    // === Caz 2: Citire repetat? de la aceea?i adres? (ar trebui s? fie HIT) ===
+    #20;
+    bgn = 1; read = 1; address = 32'h00000000;
+    #100;
+    bgn = 0; read = 0;
+
+    // === Caz 3: Scriere la o adres? nou? ===
+    #20;
+    bgn = 1; write = 1; address = 32'h00001000;
+    data_to_write = 512'hDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF;
+    #100;
+    bgn = 0; write = 0;
+
+    // === Caz 4: Citire imediat? dup? scriere (ar trebui s? fie HIT) ===
+    #20;
+    bgn = 1; read = 1; address = 32'h00001000;
+    #100;
+    bgn = 0; read = 0;
+
+    // === Caz 5: Scriere la o alt? adres? (test pentru validare în alte blocuri) ===
+    #20;
+    bgn = 1; write = 1; address = 32'h00002000;
+    data_to_write = 512'hCAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE_CAFEBABE;
+    #100;
+    bgn = 0; write = 0;
+
+    // === Caz 6: Citire din noua adres? (ar trebui s? fie HIT) ===
+    #20;
+    bgn = 1; read = 1; address = 32'h00002000;
+    #100;
+    bgn = 0; read = 0;
+
+    // === Caz 7: Citire de la o adres? necunoscut? (ar trebui s? fie MISS) ===
+    #20;
+    bgn = 1; read = 1; address = 32'h0000F000;
+    #100;
+    bgn = 0; read = 0;
+
+    // === Caz 8: Suprascriere adres? existent? (scriere în cache valid) ===
+    #20;
+    bgn = 1; write = 1; address = 32'h00001000;
+    data_to_write = 512'hBADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE_BADD_C0DE;
+    #100;
+    bgn = 0; write = 0;
+    // === Caz 9: Citire dup? suprascriere (verificare actualizare date) ===
+    #20;
+    bgn = 1; read = 1; address = 32'h00001000;
+    #100;
+    bgn = 0; read = 0;
+
+    // Terminare simulare
+    #50;
+end
+
+
+endmodule

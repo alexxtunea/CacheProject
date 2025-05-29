@@ -1,8 +1,8 @@
 # add all Verilog source files, separated by spaces
-set sourcefiles {Cache.v}
+set sourcefiles {testbench_cache.v Cache.v fsm.v}
 
 # set name of the top module
-set topmodule Cache_tb
+set topmodule tb
 
 ###################################################
 #####DO NOT MODIFY THE SCRIPT BELLOW THIS LINE#####

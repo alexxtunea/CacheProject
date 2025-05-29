@@ -1,150 +1,4 @@
-module fsm(
-    input clk, rst, bgn,
-    input write,
-    input read,
-    input hit, miss,
-    input full,
-    output reg c0,c1,c2,c3,c4,c5,c6,c7
-);
-
-//FSM States 
-parameter IDLE = 4'b0000;
-parameter READ = 4'b0001;
-parameter WRITE = 4'b0010;
-parameter READ_HIT = 4'b0011;
-parameter READ_MISS = 4'b0100;
-parameter WRITE_HIT = 4'b0101;
-parameter WRITE_MISS = 4'b0110;
-parameter CHECK = 4'b0111;
-parameter EVICT = 4'b1000;
-parameter EXIT = 4'b1001;
-
-reg [3:0] st, nxt_st;
-
-
-always @(posedge clk,negedge rst) begin
-
-    if(rst) begin
-        st <= IDLE;
-        {c0, c1, c2, c3, c4, c5, c6, c7} <= 8'b0;
-    end
-    else begin
-        st <= nxt_st;
-    end
-
-end
-
-
-always @(*) begin
-    nxt_st = st;
-    case(st)
-        IDLE : begin
-            if(bgn == 1'b0)begin
-                nxt_st <= IDLE;
-            end
-            else begin
-		if(read == 1'b1) begin
-                nxt_st <= READ;
-           	end
-            	else if(write == 1'b1) begin
-                nxt_st <= WRITE;
-            	end
-            	else begin
-                nxt_st <= IDLE;
-            	end
-	    end     	
-        end
-        READ : begin
-            if(hit == 1'b1) begin
-                nxt_st <= READ_HIT;
-            end
-            else if(miss == 1'b1) begin
-                nxt_st <= READ_MISS;
-                
-            end
-        end
-        WRITE : begin
-            if(hit == 1'b1) begin
-                nxt_st <= WRITE_HIT;
-            end
-            else if(miss == 1'b1) begin
-                nxt_st <= WRITE_MISS;
-            end
-        end
-        READ_HIT : begin
-            nxt_st <= IDLE;
-        end
-        WRITE_HIT : begin
-            nxt_st <= IDLE;
-        end
-        WRITE_MISS : begin
-            nxt_st <= CHECK;
-        end
-        READ_MISS : begin
-            nxt_st <= CHECK;
-        end
-        CHECK : begin 
-            if(full == 1'b0) begin
-                nxt_st <= EXIT;
-            end
-            if(full == 1'b1) begin
-                nxt_st <= EVICT;
-            end
-        end
-        EVICT : begin
-            nxt_st <= EXIT;
-        end
-        EXIT : begin
-            nxt_st <= IDLE;
-        end
-
-    endcase
-end
-
-
-always @(posedge clk,posedge rst) begin
-    {c0, c1, c2, c3, c4, c5, c6, c7} <= 8'b0;
-
-    case(nxt_st)
-        IDLE : begin
-            c0 <= 1'b1;
-        end
-        READ : begin
-            c1 <= 1'b1;
-        end
-        WRITE : begin
-            c2 <= 1'b1;
-        end
-        READ_HIT : begin
-            c1 <= 1'b1;
-            c3 <= 1'b1;
-        end
-        WRITE_HIT : begin
-            c2 <= 1'b1;
-            c3 <= 1'b1;
-        end
-        READ_MISS : begin
-            c1 <= 1'b1;
-            c4 <= 1'b1;
-        end
-        WRITE_MISS : begin
-            c2 <= 1'b1;
-            c4 <= 1'b1;
-        end
-        CHECK : begin
-            c5 <= 1'b1;
-        end
-        EVICT : begin
-            c7 <= 1'b1;
-        end
-        EXIT : begin
-            c6 <= 1'b1;
-        end
-    endcase
-end
-
-endmodule
-
+`include "fsm.v"
 
 module Cache #(
      parameter CACHE_SIZE = 32768, //32 KB
@@ -296,28 +150,28 @@ always @(posedge clk,negedge rst) begin
             end
             if(c6 == 1'b1) begin //Load the date into the cache
                 
-                if(pos_for_new_data == 2'b11) begin
+                if(new_location == 2'b11) begin
                     lru[index][11:9] <= 3'b000;
                     dirty_bits[index][3] <= 1'b0;
                     data_cache[3*128+index] <= data_to_write;
                     tags_cache[3*128+index] <= tag;
                     valid[3*128+index] <= 1'b1;
                 end
-                else if(pos_for_new_data == 2'b10) begin
+                else if(new_location == 2'b10) begin
                     lru[index][8:6] <= 3'b000;
                     dirty_bits[index][2] <= 1'b0;
                     data_cache[2*128+index] <= data_to_write;
                     tags_cache[2*128+index] <= tag;
                     valid[2*128+index] <= 1'b1;
                 end
-                else if(pos_for_new_data == 2'b01) begin
+                else if(new_location == 2'b01) begin
                     lru[index][5:3] <= 3'b000;
                     dirty_bits[index][1] <= 1'b0;
                     data_cache[128+index] <= data_to_write;
                     tags_cache[128+index] <= tag;
                     valid[128+index] <= 1'b1;
                 end
-                else if(pos_for_new_data == 2'b00) begin
+                else if(new_location == 2'b00) begin
                     lru[index][2:0] <= 3'b000;
                     dirty_bits[index][0] <= 1'b0;
                     data_cache[index] <= data_to_write;
@@ -400,12 +254,12 @@ always @(posedge clk,negedge rst) begin
             //is space in cache
             if(lru[index][11:9] == 3'b100) begin
                 new_location <= 2'b11;
-                space_in_lru <= 1'b0;
+                free <= 1'b1;
                 
             end
             else if(lru[index][8:6] == 3'b100) begin
                 new_location <= 2'b10;
-                space_in_lru <= 1'b0;
+                free <= 1'b1;
                 
             end
             else if(lru[index][5:3] == 3'b100) begin
@@ -415,11 +269,11 @@ always @(posedge clk,negedge rst) begin
             end
             else if(lru[index][2:0] == 3'b100) begin
                 new_location <= 2'b00;
-                space_in_lru <= 1'b0;
+                free <= 1'b1;
                 
             end
             else begin
-                space_in_lru <= 1'b1;
+                free <= 1'b0;
                 
             end
             
