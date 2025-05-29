@@ -1,4 +1,4 @@
-'import "fsm.v"
+'include "fsm.v"
 
 module Cache #(
      parameter CACHE_SIZE = 32768, //32 KB
@@ -149,35 +149,37 @@ always @(posedge clk,negedge rst) begin
                 
             end
             if(c6 == 1'b1) begin //Load the date into the cache
-                
-                if(pos_for_new_data == 2'b11) begin
-                    lru[index][11:9] <= 3'b000;
-                    dirty_bits[index][3] <= 1'b0;
-                    data_cache[3*128+index] <= data_to_write;
-                    tags_cache[3*128+index] <= tag;
-                    valid[3*128+index] <= 1'b1;
-                end
-                else if(pos_for_new_data == 2'b10) begin
-                    lru[index][8:6] <= 3'b000;
-                    dirty_bits[index][2] <= 1'b0;
-                    data_cache[2*128+index] <= data_to_write;
-                    tags_cache[2*128+index] <= tag;
-                    valid[2*128+index] <= 1'b1;
-                end
-                else if(pos_for_new_data == 2'b01) begin
-                    lru[index][5:3] <= 3'b000;
-                    dirty_bits[index][1] <= 1'b0;
-                    data_cache[128+index] <= data_to_write;
-                    tags_cache[128+index] <= tag;
-                    valid[128+index] <= 1'b1;
-                end
-                else if(pos_for_new_data == 2'b00) begin
-                    lru[index][2:0] <= 3'b000;
-                    dirty_bits[index][0] <= 1'b0;
-                    data_cache[index] <= data_to_write;
-                    tags_cache[index] <= tag;
-                    valid[index] <= 1'b1;
-                end
+
+		case(new_location)                 
+                    2'b11: begin
+                    	lru[index][11:9] <= 3'b000;
+                    	cache_dirty_bit[index][3] <= 1'b0;
+                    	cache_size_data[3*128+index] <= data;
+                    	cache_tag[3*128+index] <= tag;
+                    	cache_valid_bit[3*128+index] <= 1'b1;
+                    end
+               	    2'b10: begin
+                    	lru[index][8:6] <= 3'b000;
+                    	dirty_bits[index][2] <= 1'b0;
+                   	data_cache[2*128+index] <= data_to_write;
+                    	tags_cache[2*128+index] <= tag;
+                    	valid[2*128+index] <= 1'b1;
+                    end
+                    2'b01: begin
+                    	lru[index][5:3] <= 3'b000;
+                    	dirty_bits[index][1] <= 1'b0;
+                    	data_cache[128+index] <= data_to_write;
+                    	tags_cache[128+index] <= tag;
+                    	valid[128+index] <= 1'b1;
+                    end
+                    2'b00: begin
+                    	lru[index][2:0] <= 3'b000;
+                    	dirty_bits[index][0] <= 1'b0;
+                    	data_cache[index] <= data_to_write;
+                    	tags_cache[index] <= tag;
+                    	valid[index] <= 1'b1;
+                    end
+		endcase
                 
             end
 
@@ -197,55 +199,57 @@ always @(posedge clk,negedge rst) begin
     always @(posedge clk,negedge rst) begin
         if(c3 == 1'b1) begin
             //When you get a hit and reset the LRU data to 0 and increment the over LRU data
-            if(temp_and_values == 4'b1000) begin //set1
-                lru[index][11:9] <= 3'b0;
-                if(lru[index][8:6] < 3'b011) begin
-                    lru[index][8:6] <= lru[index][8:6] + 3'b001;
-                end
-                if(lru[index][5:3] < 3'b011) begin
-                    lru[index][5:3] <= lru[index][5:3] + 3'b001;
-                end
-                if(lru[index][2:0] < 3'b011) begin
-                    lru[index][2:0] <= lru[index][2:0] + 3'b001;
-                end
+	    case(temp_and_values)
+            	4'b1000: begin //set1
+                	lru[index][11:9] <= 3'b0;
+                	if(lru[index][8:6] < 3'b011) begin
+                    		lru[index][8:6] <= lru[index][8:6] + 3'b001;
+                	end
+                	if(lru[index][5:3] < 3'b011) begin
+                   		 lru[index][5:3] <= lru[index][5:3] + 3'b001;
+                	end
+                	if(lru[index][2:0] < 3'b011) begin
+                   		 lru[index][2:0] <= lru[index][2:0] + 3'b001;
+               		 end
 
-            end 
-            else if(temp_and_values == 4'b0100) begin //set2
-                lru[index][8:6] <= 3'b0;
-                if(lru[index][11:9] < 3'b011) begin
-                    lru[index][11:9] <= lru[index][11:9] + 3'b001;
-                end
-                if(lru[index][5:3] < 3'b011) begin
-                    lru[index][5:3] <= lru[index][5:3] + 3'b001;
-                end
-                if(lru[index][2:0] < 3'b011) begin
-                    lru[index][2:0] <= lru[index][2:0] + 3'b001;
-                end
-            end
-            else if(temp_and_values == 4'b0010) begin //set3
-                lru[index][5:3] <= 3'b0;
-                if(lru[index][8:6] < 3'b011) begin
-                    lru[index][8:6] <= lru[index][8:6] + 3'b001;
-                end
-                if(lru[index][11:9] < 3'b011) begin
-                    lru[index][11:9] <= lru[index][11:9] + 3'b001;
-                end
-                if(lru[index][2:0] < 3'b011) begin
-                    lru[index][2:0] <= lru[index][2:0] + 3'b001;
-                end
-            end
-            else if(temp_and_values == 4'b0001) begin //set4
-                lru[index][2:0] <= 3'b0;
-                if(lru[index][8:6] < 3'b011) begin
-                    lru[index][8:6] <= lru[index][8:6] + 3'b001;
-                end
-                if(lru[index][5:3] < 3'b011) begin
-                    lru[index][5:3] <= lru[index][5:3] + 3'b001;
-                end
-                if(lru[index][11:9] < 3'b011) begin
-                    lru[index][11:9] <= lru[index][11:9] + 3'b001;
-                end
-            end
+            	end 
+                4'b0100: begin //set2
+                	lru[index][8:6] <= 3'b0;
+                	if(lru[index][11:9] < 3'b011) begin
+                    		lru[index][11:9] <= lru[index][11:9] + 3'b001;
+                	end
+                	if(lru[index][5:3] < 3'b011) begin
+                    		lru[index][5:3] <= lru[index][5:3] + 3'b001;
+                	end
+                	if(lru[index][2:0] < 3'b011) begin
+                    		lru[index][2:0] <= lru[index][2:0] + 3'b001;
+                	end
+           	end
+                4'b0010: begin //set3
+	                lru[index][5:3] <= 3'b0;
+                	if(lru[index][8:6] < 3'b011) begin
+                    		lru[index][8:6] <= lru[index][8:6] + 3'b001;
+                	end
+                	if(lru[index][11:9] < 3'b011) begin
+                    		lru[index][11:9] <= lru[index][11:9] + 3'b001;
+                	end
+                	if(lru[index][2:0] < 3'b011) begin
+                    		lru[index][2:0] <= lru[index][2:0] + 3'b001;
+                	end
+            	end
+           	4'b0001: begin //set4
+                	lru[index][2:0] <= 3'b0;
+                	if(lru[index][8:6] < 3'b011) begin
+                    		lru[index][8:6] <= lru[index][8:6] + 3'b001;
+                	end
+                	if(lru[index][5:3] < 3'b011) begin
+                    		lru[index][5:3] <= lru[index][5:3] + 3'b001;
+                	end
+                	if(lru[index][11:9] < 3'b011) begin
+                    		lru[index][11:9] <= lru[index][11:9] + 3'b001;
+                	end
+            	end
+	      endcase
         end
 
         if(c5 == 1'b1) begin
