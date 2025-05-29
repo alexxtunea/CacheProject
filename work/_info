@@ -9,47 +9,48 @@ z2
 !i10f 100
 cModel Technology
 Z0 dC:/Users/Alex/Desktop/CacheProject
-vtestare
-Z1 !s110 1748004910
+vCache
+Z1 !s110 1748034875
 !i10b 1
-!s100 J<jcE3PW7azJbX]8`W1HU3
+!s100 Rn;=@W]M1MngNGF^c:@Rb1
 Z2 !s11b Dg1SIo80bB@j0V0VzS_@n1
-I[mU?0J9o2T?ze:_]6bU_Y3
+I24EBO];1X9R=856S5?OT31
 Z3 VDg1SIo80bB@j0V0VzS_@n1
 R0
-Z4 w1748004904
-Z5 8testare.v
-Z6 Ftestare.v
+Z4 w1748034871
+Z5 8Cache.v
+Z6 FCache.v
 !i122 0
-L0 1 415
+L0 149 185
 Z7 OV;L;2020.1;71
 r1
 !s85 0
 31
-Z8 !s108 1748004910.000000
-!s107 testare.v|
-Z9 !s90 -reportprogress|300|testare.v|
+Z8 !s108 1748034875.000000
+!s107 Cache.v|
+Z9 !s90 -reportprogress|300|Cache.v|
 !i113 1
 Z10 tCvgOpt 0
-vtestare_tb
+n@cache
+vfsm
 R1
 !i10b 1
-!s100 Q_K0bk;9ZH;^3]9O=;L9f0
+!s100 Gl^5oIU54>d25N0i:_o_`2
 R2
-I=a0Mga2_n]1HeLY=JdFhI2
+ICooI`CL2e[>KDD[L4kT:<2
 R3
 R0
 R4
 R5
 R6
 !i122 0
-L0 417 292
+L0 1 146
 R7
 r1
 !s85 0
 31
 R8
-Z11 !s107 testare.v|
+Z11 !s107 Cache.v|
 R9
 !i113 1
 R10

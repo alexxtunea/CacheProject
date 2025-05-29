@@ -1,708 +1,309 @@
-module testare(
-    input clk,
-    input rst,
-    input bgn,
-    input write,
-    input read,
-    input [511:0] data,//folosi ca datele care sunt aduse din MM
-    input [31:0] address,//adresa ceruta
-    output reg [511:0] outbus,// Bus pentru datele de ie?ire
-    output reg hit,//Indicator pentru hit
-	output reg [3:0]state,// Starea curent?
-	output reg miss // Indicator pentru miss
+module testare (
+    input wire clk,
+    input wire reset,
+    input wire [31:0] address,
+    input wire [31:0] write_data,
+    input wire read,
+    input wire write,
+    output reg [31:0] read_data,
+    output reg hit,
+    output reg miss,
+    output reg busy
 );
-	//Registri folositi pentru a stoca datele primite
-	
-	
-	//cache size data
-    reg [511:0] cache_size_data [511:0];
-    //cache tag
-    reg [18:0] cache_tag [511:0];
-    //cache valid bit
-    reg [511:0] cache_valid_bit;
-    //cache dirty bit
-    reg [3:0] cache_dirty_bit [127:0];
-	
-	localparam var =128;
-    //adresa
-    reg [18:0] tag;
-    reg [6:0] index;
-    reg [5:0] offset;
+
+    parameter CACHE_SIZE = 32768;  // 32 KB
+    parameter BLOCK_SIZE = 64;     // 64 bytes
+    parameter NUM_SETS = 128;      // Number of sets
+    parameter ASSOCIATIVITY = 4;   // 4-way set associative
+
+    parameter NUM_BLOCKS = CACHE_SIZE / BLOCK_SIZE;
+    parameter INDEX_BITS = $clog2(NUM_SETS);
+    parameter OFFSET_BITS = $clog2(BLOCK_SIZE);
+    parameter TAG_BITS = 32 - INDEX_BITS - OFFSET_BITS;
+
+    parameter IDLE = 3'd0;
+    parameter READ_HIT = 3'd1;
+    parameter READ_MISS = 3'd2;
+    parameter WRITE_HIT = 3'd3;
+    parameter WRITE_MISS = 3'd4;
+    parameter EVICT = 3'd5;
 
 
-    //LRU pentru fiecare bloc dintr un set 
-    reg [2:0]lru1 [127:0];
-	reg [2:0]lru2 [127:0];
-	reg [2:0]lru3 [127:0];
-	reg [2:0]lru4 [127:0];
-    integer i;
 
+reg [2:0] state, next_state;
 
-	reg [3:0] satte_reg;
-	//codificare stari
-	parameter IDLE =            4'b0000;
-	parameter GET_ADDRESS =     4'b0001;
-	parameter READ =            4'b0010;
-	parameter WRITE =           4'b0011;
-	parameter READ_MISS =       4'b0100;
-	parameter READ_HIT =        4'b0101;
-	parameter WRITE_MISS =      4'b0110;
-	parameter WRITE_HIT =       4'b0111;
-	parameter CHECK =           4'b1000;
-	parameter EVICT =           4'b1001;
-	
-	//initializare variabile punem valid pe 0
-	initial begin 
-	for( i=0;i<512;i=i+1)
-	begin
-		cache_valid_bit[i]=0;
-	end
-	outbus=0;
-	hit=0;
-	miss=0;
-	satte_reg=IDLE;
-	end
-	
-	
-	always @(*) begin
-		case(satte_reg)
-			IDLE : begin //vedem daca putem incepe
-				hit<=0;
-				miss<=0;
-				if(bgn == 1'b0)begin
-					satte_reg <= IDLE;
-				end
-				else begin
-					satte_reg <= GET_ADDRESS;
-				end
-				
-			end
-			GET_ADDRESS : begin //vedem ce fel de insstructiune avem
-				tag = address[31:13];
-				index = address[12:6];
-				offset = address[5:0];
-				if(read == 1'b1) begin
-					satte_reg <= READ;
-				end
-				else if(write == 1'b1) begin
-					satte_reg <= WRITE;
-				end
-				else begin
-					satte_reg <= GET_ADDRESS;
-				end
-			end
-			READ : begin//stabilim daca avem hit sau mis daca gasim un set valid cu acelasi tag hit(la indexul specificat) altfel miss
-				if((cache_valid_bit[index]&&(cache_tag[index]==tag ))||(cache_valid_bit[index+var]&&(cache_tag[index+var]==tag ))||
-				(cache_valid_bit[index+var*2]&&(cache_tag[index+var*2]==tag ))||(cache_valid_bit[index+var*3]&&(cache_tag[index+var*3]==tag ))) 
-				begin
-					satte_reg <= READ_HIT;
-				end
-				else  begin
-					satte_reg <= READ_MISS;	
-				end
-			end
-			WRITE : begin
-				if( (cache_valid_bit[index]&&(cache_tag[index]==tag ))||(cache_valid_bit[index+var]&&(cache_tag[index+var]==tag ))||
-				(cache_valid_bit[index+var*2]&&(cache_tag[index+var*2]==tag ))||(cache_valid_bit[index+var*3]&&(cache_tag[index+var*3]==tag ))) //satbilim daca avem hit sau miss daca gasim un set valid cu aclasi tag hit(la indexul specificat) altfel miss
-				begin
-					satte_reg <= WRITE_HIT;
-				end
-				else  begin
-					satte_reg <= WRITE_MISS;
-				end
-			end
-			READ_HIT : begin
-				#40
-				hit<=1;
-				#5
-				//facem update la lru 
-				if(cache_valid_bit[index]==1&&(cache_tag[index]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-				begin
-					if(cache_valid_bit[index+var]==0 && lru2[index]<=lru1[index])
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru3[index]<=lru1[index])
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru4[index]<=lru1[index])
-					lru4[index]<=lru4[index]+3'b001;
-					
-					lru1[index]<=1'b0;
-				end
-				if(cache_valid_bit[index+var]==1&&(cache_tag[index+var]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-				begin
-					if(cache_valid_bit[index+var]==0 && lru1[index]<=lru2[index])
-					lru1[index]<=lru1[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru3[index]<=lru2[index])
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru4[index]<=lru2[index])
-					lru4[index]<=lru4[index]+1'b1;
-					
-					lru2[index]<=1'b0;
-				end
-				if(cache_valid_bit[index+var*2]==1&&(cache_tag[index+var*2]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-					begin
-					if(cache_valid_bit[index+var]==0 && lru1[index]<=lru3[index])
-					lru1[index]<=lru1[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru2[index]<=lru3[index])
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru4[index]<=lru3[index])
-					lru4[index]<=lru4[index]+1'b1;
-					
-					lru3[index]<=1'b0;
-					end
-				if(cache_valid_bit[index+var*3]==1&&(cache_tag[index+var*3]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-					begin
-					if(cache_valid_bit[index+var]==0 && lru2[index]<=lru4[index])
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru3[index]<=lru4[index])
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru1[index]<=lru4[index])
-					lru1[index]<=lru1[index]+1'b1;
-					
-					lru4[index]<=1'b0;
-					end
-				outbus<=cache_size_data[index];//trimitem datele citite pe bus
-				satte_reg <= IDLE;
-			end
-			WRITE_HIT : begin
-				#40
-				hit<=1;
-				#5
-				if(cache_valid_bit[index]==1&&(cache_tag[index]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-				begin
-					if(cache_valid_bit[index+var]==0 && lru2[index]<=lru1[index])
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru3[index]<=lru1[index])
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru4[index]<=lru1[index])
-					lru4[index]<=lru4[index]+3'b001;
-					
-					lru1[index]<=1'b0;
-					cache_dirty_bit[index][2]<=1'b1;//Setam bitul de dirty
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele cerute pe bus
-					cache_tag[index]<=tag;
-					cache_valid_bit<=1'b1;
-				end
-				if(cache_valid_bit[index+var]==1&&(cache_tag[index+var]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-				begin
-					if(cache_valid_bit[index+var]==0 && lru1[index]<=lru2[index])
-					lru1[index]<=lru1[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru3[index]<=lru2[index])
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru4[index]<=lru2[index])
-					lru4[index]<=lru4[index]+3'b001;
-					
-					lru2[index]<=1'b0;
-					cache_dirty_bit[index][1]<=1'b1;//Setam bitul de dirty
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele cerute pe bus
-					cache_tag[index]<=tag;
-					cache_valid_bit<=1'b1;
-				end
-				if(cache_valid_bit[index+var*2]==1&&(cache_tag[index+var*2]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-					begin
-					if(cache_valid_bit[index+var]==0 && lru1[index]<=lru3[index])
-					lru1[index]<=lru1[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru2[index]<=lru3[index])
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru4[index]<=lru3[index])
-					lru4[index]<=lru4[index]+3'b001;
-					
-					lru3[index]<=1'b0;
-					cache_dirty_bit[index][2]<=1'b1;//Setam bitul de dirty
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele cerute pe bus
-					cache_tag[index]<=tag;
-					cache_valid_bit<=1'b1;
-					end
-				if(cache_valid_bit[index+var*3]==1&&(cache_tag[index+var*3]&&tag))//verificam daca acesta este setul cerut daca acesta este actualizam lru biti corespunzator
-					begin
-					if(cache_valid_bit[index+var]==0 && lru2[index]<=lru4[index])
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 && lru3[index]<=lru4[index])
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 && lru1[index]<=lru4[index])
-					lru1[index]<=lru1[index]+3'b001;
-					
-					lru4[index]<=1'b0;
-					cache_dirty_bit[index][3]<=1'b1;//Setam bitul de dirty
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele cerute pe bus
-					cache_tag[index]<=tag;
-					cache_valid_bit<=1'b1;
-					end
-				satte_reg <= IDLE;
-			end
-			WRITE_MISS : begin
-				satte_reg <= CHECK;
-			end
-			READ_MISS : begin
-				satte_reg <= CHECK;
-			end
-			CHECK : begin 
-				#40
-				miss<=1;
-				#5
-				//verificam bitul de valid(adica daca exista deja date acolo)
-				if(cache_valid_bit[index]==0)//verificam setul si actualizam lru biti corespunzator
-				begin
-					if(cache_valid_bit[index+var]==0 )
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 )
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 )
-					lru4[index]<=lru4[index]+3'b001;
-					
-					lru1[index]<=1'b0;
-					
-					cache_dirty_bit[index][0]<=1'b0;//Resetam bitul de dirty
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele cerute pe bus
-					cache_tag[index]<=tag;
-					cache_valid_bit[index]<=1'b1;//setam bitul valid
-					satte_reg<=IDLE;
-				end
-				if(cache_valid_bit[index+var]==0)//verificam setul si actualizam lru biti corespunzator
-				begin
-					if(cache_valid_bit[index+var]==0 )
-					lru1[index]<=lru1[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0)
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 )
-					lru4[index]<=lru4[index]+3'b001;
-					
-					lru2[index]<=1'b0;
-					
-					cache_valid_bit[index+var]<=1'b1;//setam bitul de valid
-					cache_dirty_bit[index][1]<=1'b0;//Resetam bitul de dirty
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele cerute pe bus
-					cache_tag[index]<=tag;
-					satte_reg<=IDLE;
-				end
-				if(cache_valid_bit[index+var*2]==0)//verificam setul si actualizam lru biti corespunzator
-				begin
-					
-					if(cache_valid_bit[index+var]==0 )
-					lru1[index]<=lru1[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 )
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 )
-					lru4[index]<=lru4[index]+3'b001;
-					
-					lru3[index]<=1'b0;
-					
-					cache_valid_bit[index+var*2]<=1'b1;//setam bitul de valid
-					cache_dirty_bit[index][2]<=1'b0;//resetam bitul de dirty
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele pe bus
-					cache_tag[index]<=tag;
-					satte_reg<=IDLE;
-				end
-				if(cache_valid_bit[index+var*3]==0)//verificam setul si actualizam lru biti corespunzator
-				begin
-					
-					if(cache_valid_bit[index+var]==0 )
-					lru2[index]<=lru2[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*2]==0 )
-					lru3[index]<=lru3[index]+3'b001;
-					
-					if(cache_valid_bit[index+var*3]==0 )
-					lru1[index]<=lru1[index]+3'b001;
-					
-					lru4[index]<=1'b0;
-					
-					cache_valid_bit[index+var*3]<=1'b1;//setam bitul de valid
-					cache_dirty_bit[index][3]<=1'b0;//resetam bitul de dirty
-					cache_tag[index]<=tag;
-					cache_size_data[index]=data;//retinem datele
-					outbus<=data;//scoatem datele pe bus
-					satte_reg<=IDLE;
-				end
-				satte_reg <= EVICT;//daca bitul este valid mergem in evict(scoatem datele)
-				
-			end
-			EVICT : begin
-			#40
-			//verificam bitii de lru pentru seturi
-				if(lru4[index]==3)
-				begin
-					if(cache_dirty_bit[index][3])//verificam setul,adica daca are bitul de dirty setat,in caz afirmativ scoatem datele pe bus
-					begin
-						outbus<=cache_size_data[index];//punem datele pe bus
-					end
-					#40
-					//actualizam bitii de lru corespunzatori
-					lru1[index]<=lru1[index]+3'b001;
-					lru2[index]<=lru2[index]+3'b001;
-					lru3[index]<=lru3[index]+3'b001;
-					lru4[index]<=0;
-					cache_size_data[index]<=data;//retinem datele
-				end
-				if(lru3[index]==3)
-				begin
-					if(cache_dirty_bit[index][3])//verificam setul,adica daca are bitul de dirty setat,in caz afirmativ scoatem datele pe bus
-					begin
-						outbus<=cache_size_data[index];//punem datele pe bus
-					end
-					#40
-					//actualizam bitii de lru corespunzatori
-					lru1[index]<=lru1[index]+3'b001;
-					lru2[index]<=lru2[index]+3'b001;
-					lru4[index]<=lru3[index]+3'b001;
-					lru3[index]<=0;
-					cache_size_data[index]<=data;//retinem datele
-				end
-				if(lru2[index]==3)
-				begin
-					if(cache_dirty_bit[index][3])//verificam setul,adica daca are bitul de dirty setat,in caz afirmativ scoatem datele pe bus
-					begin
-						outbus<=cache_size_data[index];
-					end
-					#40
-					//actualizam bitii de lru corespunzatori
-					lru1[index]<=lru1[index]+3'b001;
-					lru4[index]<=lru2[index]+3'b001;
-					lru3[index]<=lru3[index]+3'b001;
-					lru2[index]<=0;
-					cache_size_data[index]<=data;//retinem datele
-				end
-				if(lru1[index]==3)
-				begin
-					if(cache_dirty_bit[index][3])//verificam setul,adica daca are bitul de dirty setat,in caz afirmativ scoatem datele pe bus
-					begin
-						outbus<=cache_size_data[index];
-					end
-					#40
-					//actualizam bitii de lru corespunzatori
-					lru4[index]<=lru1[index]+3'b001;
-					lru2[index]<=lru2[index]+3'b001;
-					lru3[index]<=lru3[index]+3'b001;
-					lru1[index]<=0;
-					cache_size_data[index]<=data;//retine datele
-				end
-				satte_reg <= IDLE;
-			end
-			
-			
-		endcase
-		state<=satte_reg;
-	end
+    reg [31:0] cache_data [0:NUM_SETS-1][0:ASSOCIATIVITY-1][0:BLOCK_SIZE/4-1];
+    reg [TAG_BITS-1:0] cache_tags [0:NUM_SETS-1][0:ASSOCIATIVITY-1];
+    reg valid [0:NUM_SETS-1][0:ASSOCIATIVITY-1];
+    reg [1:0] lru_counter [0:NUM_SETS-1][0:ASSOCIATIVITY-1];
+    reg dirty [0:NUM_SETS-1][0:ASSOCIATIVITY-1];
+
+    reg [INDEX_BITS-1:0] index;
+    reg [OFFSET_BITS-1:0] offset;
+    reg [TAG_BITS-1:0] tag;
+    integer i, j, way, ok;
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            state <= IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    always @(*) begin
+        case (state)
+            IDLE: begin
+                if (read) begin
+                    index = address[OFFSET_BITS +: INDEX_BITS];
+                    tag = address[31 -: TAG_BITS];
+                    next_state = IDLE;
+		    ok = 0;
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (valid[index][i] && cache_tags[index][i] == tag && !ok) begin
+                            next_state = READ_HIT;
+                            way = i;
+                            ok = 1;
+                        end
+                    end
+                    if (next_state == IDLE) next_state = READ_MISS;
+                end else if (write) begin
+                    index = address[OFFSET_BITS +: INDEX_BITS];
+                    tag = address[31 -: TAG_BITS];
+                    next_state = IDLE;
+		    ok = 0;
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (valid[index][i] && cache_tags[index][i] == tag && !ok) begin
+                            next_state = WRITE_HIT;
+                            way = i;
+                            ok=1;
+                        end
+                    end
+                    if (next_state == IDLE) next_state = WRITE_MISS;
+                end else begin
+                    next_state = IDLE;
+                end
+            end
+            READ_HIT: next_state = IDLE;
+            READ_MISS: next_state = EVICT;
+            WRITE_HIT: next_state = IDLE;
+            WRITE_MISS: next_state = EVICT;
+            EVICT: next_state = IDLE;
+            default: next_state = IDLE;
+        endcase
+    end
+
+    always @(posedge clk) begin
+        if (reset) begin
+            for (i = 0; i < NUM_SETS; i = i + 1) begin
+                for (j = 0; j < ASSOCIATIVITY; j = j + 1) begin
+                    valid[i][j] <= 0;
+                    dirty[i][j] <= 0;
+                    lru_counter[i][j] <= 0;
+                end
+            end
+            busy <= 0;
+            hit <= 0;
+            miss <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    busy <= 0;
+                    hit <= 0;
+                    miss <= 0;
+                end
+                READ_HIT: begin
+                    offset = address[OFFSET_BITS-1:0];
+                    read_data <= cache_data[index][way][offset];
+                    hit <= 1;
+                    busy <= 0;
+                    // LRU Update
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (i != way && lru_counter[index][i] < lru_counter[index][way]) begin
+                            lru_counter[index][i] = lru_counter[index][i] + 1;
+                        end
+                    end
+                    lru_counter[index][way] = 0;
+                end
+                READ_MISS: begin
+                    miss <= 1;
+                    busy <= 1;
+                    #10;  // Simulate memory fetch delay
+                    index = address[OFFSET_BITS +: INDEX_BITS];
+                    offset = address[OFFSET_BITS-1:0];
+                    tag = address[31 -: TAG_BITS];
+                    // Find an empty way or LRU way
+                    way = 0;
+		    ok = 0;
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (!valid[index][i] && !ok) begin
+                            way = i;
+                            break;
+                        end
+                    end
+                    if (i == ASSOCIATIVITY) begin
+                        way = 0;
+                        for (i = 1; i < ASSOCIATIVITY; i = i + 1) begin
+                            if (lru_counter[index][i] > lru_counter[index][way]) begin
+                                way = i;
+                            end
+                        end
+                    end
+                    cache_tags[index][way] <= tag;
+                    valid[index][way] <= 1;
+                    dirty[index][way] <= 0;
+                    for (j = 0; j < BLOCK_SIZE/4; j = j + 1) begin
+                        cache_data[index][way][j] <= address;  // Dummy memory read
+                    end
+                    // LRU Update
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (i != way && lru_counter[index][i] < lru_counter[index][way]) begin
+                            lru_counter[index][i] = lru_counter[index][i] + 1;
+                        end
+                    end
+                    lru_counter[index][way] = 0;
+                end
+                WRITE_HIT: begin
+                    offset = address[OFFSET_BITS-1:0];
+                    cache_data[index][way][offset] <= write_data;
+                    dirty[index][way] <= 1;
+                    hit <= 1;
+                    busy <= 0;
+                    // LRU Update
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (i != way && lru_counter[index][i] < lru_counter[index][way]) begin
+                            lru_counter[index][i] = lru_counter[index][i] + 1;
+                        end
+                    end
+                    lru_counter[index][way] = 0;
+                end
+                WRITE_MISS: begin
+                    miss <= 1;
+                    busy <= 1;
+                    #10;  // Simulate memory fetch delay
+                    index = address[OFFSET_BITS +: INDEX_BITS];
+                    offset = address[OFFSET_BITS-1:0];
+                    tag = address[31 -: TAG_BITS];
+                    // Find an empty way or LRU way
+                    way = 0;
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (!valid[index][i]) begin
+                            way = i;
+                            break;
+                        end
+                    end
+                    if (i == ASSOCIATIVITY) begin
+                        way = 0;
+                        for (i = 1; i < ASSOCIATIVITY; i = i + 1) begin
+                            if (lru_counter[index][i] > lru_counter[index][way]) begin
+                                way = i;
+                            end
+                        end
+                    end
+                    cache_tags[index][way] <= tag;
+                    valid[index][way] <= 1;
+                    dirty[index][way] <= 0;
+                    for (j = 0; j < BLOCK_SIZE/4; j = j + 1) begin
+                        cache_data[index][way][j] <= address;  // Dummy memory read
+                    end
+                    // Write data to cache
+                    cache_data[index][way][offset] <= write_data;
+                    dirty[index][way] <= 1;
+                    // LRU Update
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (i != way && lru_counter[index][i] < lru_counter[index][way]) begin
+                            lru_counter[index][i] = lru_counter[index][i] + 1;
+                        end
+                    end
+                    lru_counter[index][way] = 0;
+                end
+                EVICT: begin
+                    busy <= 1;
+                    index = address[OFFSET_BITS +: INDEX_BITS];
+                    tag = address[31 -: TAG_BITS];
+                    // Find LRU way
+                    way = 0;
+                    for (i = 1; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (lru_counter[index][i] > lru_counter[index][way]) begin
+                            way = i;
+                        end
+                    end
+                    if (dirty[index][way]) begin
+                        #10;  // Simulate memory write-back delay
+                        for (j = 0; j < BLOCK_SIZE/4; j = j + 1) begin
+                            // Dummy memory write
+                        end
+                    end
+                    valid[index][way] <= 0;
+                    dirty[index][way] <= 0;
+                    next_state = IDLE;
+                end
+            endcase
+        end
+    end
 
 endmodule
 
 module testare_tb;
+    reg clk;
+    reg reset;
+    reg [31:0] address;
+    reg [31:0] write_data;
+    reg read;
+    reg write;
+    wire [31:0] read_data;
+    wire hit;
+    wire miss;
+    wire busy;
 
-reg clk;
-reg rst;
-reg bgn;
-reg write;
-reg read;
-reg [511:0] data;
-reg [31:0] address;
-wire [511:0] outbus;
-wire hit;
-wire miss;
-wire [3:0] and_val;
+    testare uut (
+        .clk(clk),
+        .reset(reset),
+        .address(address),
+        .write_data(write_data),
+        .read(read),
+        .write(write),
+        .read_data(read_data),
+        .hit(hit),
+        .miss(miss),
+        .busy(busy)
+    );
+
+    initial begin
+        clk = 0;
+        reset = 1;
+        #10 reset = 0;
+
+	// Write miss case
+        read = 0;
+        write = 1;
+        address = 32'h0000_0004;
+        write_data = 32'hDEAD_BEEF;
+        #20;
+
+        // Write hit case
+        read = 0;
+        write = 1;
+        address = 32'h0000_0004;
+        write_data = 32'hCAFE_BABE;
+        #20;
+
+        // Read miss case
+        read = 1;
+        write = 0;
+        address = 32'h0000_0000;
+        #20;
+
+        // Read hit case
+        read = 1;
+        write = 0;
+        address = 32'h0000_0000;
+        #20;
 
 
-testare uut (
-    .clk(clk),
-    .rst(rst),
-    .bgn(bgn),
-    .write(write),
-    .read(read),
-    .data(data),
-    .address(address),
-    .outbus(outbus),
-    .hit(hit),
-	.state(and_val),
-	.miss(miss)
-);
 
-
-initial begin
-    clk = 0;
-    repeat (500) begin
-        #10 clk = ~clk;
+        $stop;
     end
-    //$stop; 
-end 
 
-initial begin
-    
-    rst = 1;
-    bgn = 0;
-    write = 0;
-    read = 0;
-
-    //Initial test: testare generala a functionalitatii cache 
-	/*	
-	#40;
-	bgn=1;
-	
-	//Read Miss
-	data = 512'hA1B2734615F60789_9876543210FEDCBA_BBCCDDEEDD001122_33445566778899AA_1122334455667788_99AABBCCDDEEFF00_0011223344556677_8899AABBCCDDEEFF;
-    address = 32'b12355628;
-	#40;
-	read=1;
-	#40;
-	read=0;
-	#200;
-	
-	//Read Hit
-	data = 512'hA1B2C3D4E5F60789_9876543210FEDCBA_BBABCDEEFF001122_33445566778899AA_1122334455667788_99AABBCCDDEEFF00_0011223344556677_8899AABBCCDDEEFF;
-    address = 32'b22345278;
-	#40;
-	read=1;
-	#40;
-	read=0;
-	
-	
-    //Write Miss
-    data = 512'hCAFEBABEDEADBEEF_1234567890ABCDEF_FEDCBA3216543210_0A1B2C3D4E5F6789_AABBCCDDEEFF0011_99AABBCCDDEEFF00_1122334455667788_8899AABBCCDDEEFF;
-    address = 32'hEFFFEF0A;
-    #40;
-    write = 1;
-    #40;
-    write = 0;
-    #40;
-	
-	//READ Hit
-	address = 32'h12345678;
-	#40;
-	read=1;
-	#40;
-	read=0;
-	#40;
-	
-	//WRITE Hit
-	data = 512'hCAFEBABEDEADBEEF_1234567890ABCDEF_FEDCBA9876543210_0A1BABC6545F6789_AABBC45698FF0011_99AABBCCDDEEFF00_11223ABDC5667788_8899AABBCCDDEEFF;
-	address = 32'h12345678;
-	
-	#40;
-	write=1;
-	#40;
-	write=0;
-	#40;
-    */
-	//Initial test testare generala a functionalitatii cache sfarsit
-
-    //CASE 1 scriem/apoi citim  de mai multe ori variabile la acelasi index trebie sa da miss consecutive
-
-	 /*
-    
-    address = 32'hFF000000;
-    data = 512'hf1B2C3D4E5F60789_9876123410FEDCBA_BBCCDACCFF001122_33445566712399AA_1ABCCB4455667788_99AABBCCDDEEFF00_0011223654556677_8899AABBCCDDEEFF;
-
-    
-     //WRITE
-	#40;
-     bgn = 1;
-     #40;
-    // bgn = 0;
-     #40;
-     write = 1;
-     #20;
-     write = 0;
-    #200;
-
-    address =  32'hEE000000;
-     data = 512'hA1B2C3D4E5F60789_98765AAAA0FEDCBA_BBCCDDEEFF001122_33B45566778899AA_11AA334455667788_99AABBCAADEEFF00_0011223344556677_8899AABBCCDDEEFF;
-
-    
-     //WRITE
-		#40;
-		 bgn = 1;
-		#40;
-		
-		 write = 1;
-	   #20;
-	  write = 0;
-		#200;
-
-    address = 32'hDD000000;
-    data = 512'h91B2C3D4E5F60789_9876543210FEDCBA_BBCCDDEEBBDC1122_33445566778899AA_112233DEF5667788_99AABBCCDDEEFF00_001122FED4558877_8899AABBCCDDEEFF;
-
-    
-     //WRITE
-     #40;
-     bgn = 1;
-     #40;
-     
-     write = 1;
-     #20;
-     write = 0;
-     #200;
-
-     address = 32'hCC000000;
-     data = 512'h81B2C3D4E5F60789_987654AAA0FEDCBA_BBCCDDEEFF001122_33445566778899AA_11223ABBAE667788_99AABBCCDDEEFF00_0011964344556677_8899AABBCCDDEEFF;
-
-    
-     //WRITE
-     #40;
-     bgn = 1;
-    #40;
-
-    write = 1;
-    #20;
-    write = 0;
-    #200;
-
-
-    address = 32'hEFAFEF0A;
-
-    //READ
-    #40;
-    bgn = 1;
-    #40;
-    read = 1;
-    #40;
-    
-    read = 0;
-    #200;
-
-
-    address = 32'hAFAFEF0A;
-
-    //READ
-    #40;
-    bgn = 1;
-    #40;
-    read = 1;
-    #40;
-    
-    read = 0;
-    #200;
-
-
-    address = 32'hBFAFEF0A;
-
-    //READ
-    #40;
-    bgn = 1;
-    #40;
-    read = 1;
-    #40;
-    
-    read = 0;
-    #200;
-
-    address = 32'hCFAFEF0A;
-
-    //READ
-    #40;
-    bgn = 1;
-    #40;
-    read = 1;
-    #40;
-    
-    read = 0;
-    #200;
-    */
-	
-    //-----------------------------------------------------------------------------------------------------------------------------------------------
-
-	
-    //CASE 2 
-	
-    address = 32'hCFAFEF0A;
-    data = 512'hA1B2C3D4E5F60789_9832123210FEDCBA_BBCCDDE553001122_33445566778899AA_1122334455667788_99AABBCDCDEEFF00_0011ADADA4556677_8899AAB7896DEEFF;
-
-    //WRITE
-    #40;
-    bgn = 1;
-    #40;
-    write = 1;
-    #20;
-    write = 0;
-    #200;
-
-
-    //WRITE
-    #40;
-    write = 1;
-    #20;
-    write = 0;
-    #200;
-
-
-    address = 32'hBFAFEF0A;
-    data = 512'h81B2C3D4E5F60789_9876543997FEDCBA_BB624BEEFF001122_33445566778899AA_11223ABDA5667788_99AABBCCDDEEFF00_0011223999556677_8899AABBCCDDEEFF;
-
-    //WRITE
-    #40;
-    write = 1;
-    #20;
-    write = 0;
-    #200;
-
-    //WRITE
-    #40;
-    write = 1;
-    #20;
-    write = 0;
-    #200;
-
-    address = 32'hCFAFEF0A;
-
-    //READ
-    #40;
-    read = 1;
-    #40;
-    read = 0;
-    #200;
-
-
-    address = 32'hCAAFEF0A;
-    data = 512'h55DCABC876543210_0123456789ABCDEF_FEDCBA9159D43210_0ABDEF3789ABCDEF_FEDCBA778DA43210_0123456307ABCDEF_FEDCBA9876993210_0123456789ABCDEF;
-
-    //WRITE
-    #40;
-    write = 1;
-    #20;
-    write = 0;
-    #200;
-
-    //READ
-    #40;
-    read = 1;
-    #40;
-    read = 0;
-    #200;
-
-    //READ
-    #40;
-    read = 1;
-    #40;
-    read = 0;
-    #200;
-    
-   
-end
-
-
+    always #5 clk = ~clk;
 endmodule

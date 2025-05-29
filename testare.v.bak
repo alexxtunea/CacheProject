@@ -429,7 +429,7 @@ wire miss;
 wire [3:0] and_val;
 
 
-struct uut (
+testare uut (
     .clk(clk),
     .rst(rst),
     .bgn(bgn),

@@ -1,150 +1,4 @@
-module fsm(
-    input clk, rst, bgn,
-    input write,
-    input read,
-    input hit, miss,
-    input full,
-    output reg c0,c1,c2,c3,c4,c5,c6,c7
-);
-
-//FSM States 
-parameter IDLE = 4'b0000;
-parameter READ = 4'b0001;
-parameter WRITE = 4'b0010;
-parameter READ_HIT = 4'b0011;
-parameter READ_MISS = 4'b0100;
-parameter WRITE_HIT = 4'b0101;
-parameter WRITE_MISS = 4'b0110;
-parameter CHECK = 4'b0111;
-parameter EVICT = 4'b1000;
-parameter EXIT = 4'b1001;
-
-reg [3:0] st, nxt_st;
-
-
-always @(posedge clk,negedge rst) begin
-
-    if(rst) begin
-        st <= IDLE;
-        {c0, c1, c2, c3, c4, c5, c6, c7} <= 8'b0;
-    end
-    else begin
-        st <= nxt_st;
-    end
-
-end
-
-
-always @(*) begin
-    nxt_st = st;
-    case(st)
-        IDLE : begin
-            if(bgn == 1'b0)begin
-                nxt_st <= IDLE;
-            end
-            else begin
-		if(read == 1'b1) begin
-                nxt_st <= READ;
-           	end
-            	else if(write == 1'b1) begin
-                nxt_st <= WRITE;
-            	end
-            	else begin
-                nxt_st <= IDLE;
-            	end
-	    end     	
-        end
-        READ : begin
-            if(hit == 1'b1) begin
-                nxt_st <= READ_HIT;
-            end
-            else if(miss == 1'b1) begin
-                nxt_st <= READ_MISS;
-                
-            end
-        end
-        WRITE : begin
-            if(hit == 1'b1) begin
-                nxt_st <= WRITE_HIT;
-            end
-            else if(miss == 1'b1) begin
-                nxt_st <= WRITE_MISS;
-            end
-        end
-        READ_HIT : begin
-            nxt_st <= IDLE;
-        end
-        WRITE_HIT : begin
-            nxt_st <= IDLE;
-        end
-        WRITE_MISS : begin
-            nxt_st <= CHECK;
-        end
-        READ_MISS : begin
-            nxt_st <= CHECK;
-        end
-        CHECK : begin 
-            if(full == 1'b0) begin
-                nxt_st <= EXIT;
-            end
-            if(full == 1'b1) begin
-                nxt_st <= EVICT;
-            end
-        end
-        EVICT : begin
-            nxt_st <= EXIT;
-        end
-        EXIT : begin
-            nxt_st <= IDLE;
-        end
-
-    endcase
-end
-
-
-always @(posedge clk,posedge rst) begin
-    {c0, c1, c2, c3, c4, c5, c6, c7} <= 8'b0;
-
-    case(nxt_st)
-        IDLE : begin
-            c0 <= 1'b1;
-        end
-        READ : begin
-            c1 <= 1'b1;
-        end
-        WRITE : begin
-            c2 <= 1'b1;
-        end
-        READ_HIT : begin
-            c1 <= 1'b1;
-            c3 <= 1'b1;
-        end
-        WRITE_HIT : begin
-            c2 <= 1'b1;
-            c3 <= 1'b1;
-        end
-        READ_MISS : begin
-            c1 <= 1'b1;
-            c4 <= 1'b1;
-        end
-        WRITE_MISS : begin
-            c2 <= 1'b1;
-            c4 <= 1'b1;
-        end
-        CHECK : begin
-            c5 <= 1'b1;
-        end
-        EVICT : begin
-            c7 <= 1'b1;
-        end
-        EXIT : begin
-            c6 <= 1'b1;
-        end
-    endcase
-end
-
-endmodule
-
+'import "fsm.v"
 
 module Cache #(
      parameter CACHE_SIZE = 32768, //32 KB
@@ -157,11 +11,11 @@ module Cache #(
      input c0,c1,c2,c3,c4,c5,c6,c7,
      input [31:0] address, 
      input [511:0] data_to_write,
-     input read, write,
+     input read, write, 
      output reg [511:0] read_data,
      output reg [3:0] dirty,
      output reg [3:0] and_val,
-     output reg hit, miss, free
+     output reg hit, miss, free, ask_for_data
 );
 
 parameter NO_BLOCKS = BLOCK_SIZE / WORD_SIZE;
@@ -187,7 +41,7 @@ reg [511:0] data_from_cache;
 reg [3:0] temp_tag;
 reg [3:0] temp_and_values;
 reg temp_hit;
-reg [1:0] pos_for_new_data;
+reg [1:0] new_location;
 
 reg [1:0] st, st_next;
 
@@ -329,6 +183,122 @@ always @(posedge clk,negedge rst) begin
 
         end
     end
+
+    always @(posedge clk, negedge rst) begin
+	if(c4 == 1'b1) begin
+		ask_for_data <= 1'b1;
+	end
+	else begin
+            ask_for_data <= 1'b0;
+        end
+    end
+
+    //LRU
+    always @(posedge clk,negedge rst) begin
+        if(c3 == 1'b1) begin
+            //When you get a hit and reset the LRU data to 0 and increment the over LRU data
+            if(temp_and_values == 4'b1000) begin //set1
+                lru[index][11:9] <= 3'b0;
+                if(lru[index][8:6] < 3'b011) begin
+                    lru[index][8:6] <= lru[index][8:6] + 3'b001;
+                end
+                if(lru[index][5:3] < 3'b011) begin
+                    lru[index][5:3] <= lru[index][5:3] + 3'b001;
+                end
+                if(lru[index][2:0] < 3'b011) begin
+                    lru[index][2:0] <= lru[index][2:0] + 3'b001;
+                end
+
+            end 
+            else if(temp_and_values == 4'b0100) begin //set2
+                lru[index][8:6] <= 3'b0;
+                if(lru[index][11:9] < 3'b011) begin
+                    lru[index][11:9] <= lru[index][11:9] + 3'b001;
+                end
+                if(lru[index][5:3] < 3'b011) begin
+                    lru[index][5:3] <= lru[index][5:3] + 3'b001;
+                end
+                if(lru[index][2:0] < 3'b011) begin
+                    lru[index][2:0] <= lru[index][2:0] + 3'b001;
+                end
+            end
+            else if(temp_and_values == 4'b0010) begin //set3
+                lru[index][5:3] <= 3'b0;
+                if(lru[index][8:6] < 3'b011) begin
+                    lru[index][8:6] <= lru[index][8:6] + 3'b001;
+                end
+                if(lru[index][11:9] < 3'b011) begin
+                    lru[index][11:9] <= lru[index][11:9] + 3'b001;
+                end
+                if(lru[index][2:0] < 3'b011) begin
+                    lru[index][2:0] <= lru[index][2:0] + 3'b001;
+                end
+            end
+            else if(temp_and_values == 4'b0001) begin //set4
+                lru[index][2:0] <= 3'b0;
+                if(lru[index][8:6] < 3'b011) begin
+                    lru[index][8:6] <= lru[index][8:6] + 3'b001;
+                end
+                if(lru[index][5:3] < 3'b011) begin
+                    lru[index][5:3] <= lru[index][5:3] + 3'b001;
+                end
+                if(lru[index][11:9] < 3'b011) begin
+                    lru[index][11:9] <= lru[index][11:9] + 3'b001;
+                end
+            end
+        end
+
+        if(c5 == 1'b1) begin
+            
+            //When you get a miss and need to give a position for the next data if there
+            //is space in cache
+            if(lru[index][11:9] == 3'b100) begin
+                new_location <= 2'b11;
+                space_in_lru <= 1'b0;
+                
+            end
+            else if(lru[index][8:6] == 3'b100) begin
+                new_location <= 2'b10;
+                space_in_lru <= 1'b0;
+                
+            end
+            else if(lru[index][5:3] == 3'b100) begin
+                new_location <= 2'b01;
+                space_in_lru <= 1'b0;
+                
+            end
+            else if(lru[index][2:0] == 3'b100) begin
+                new_location <= 2'b00;
+                space_in_lru <= 1'b0;
+                
+            end
+            else begin
+                space_in_lru <= 1'b1;
+                
+            end
+            
+        end
+
+        if(c7 == 1'b1) begin
+            //makes space in cache when everything is full by giving the position 
+            //of the last reacent used set
+            if(lru[index][11:9] == 3'b011) begin
+                new_location <= 2'b11;
+            end
+            else if(lru[index][8:6] == 3'b011) begin
+                new_location <= 2'b10;
+            end
+            else if(lru[index][5:3] == 3'b011) begin
+                new_location <= 2'b01;
+            end
+            else if(lru[index][2:0] == 3'b011) begin
+                new_location <= 2'b00;
+            end
+            
+        end 
+        
+    end
+
 	
 endmodule
 
