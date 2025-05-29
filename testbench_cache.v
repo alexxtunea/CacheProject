@@ -50,9 +50,9 @@ always @(*) begin
 end
 
 always @(posedge clk or posedge rst) begin
-    if (rst) {c0,c1,c2,c3,c4,c5,c6,c7} <= 8'b0;
+    if (rst) {c0,c1,c2,c3,c4,c5,c6,c7} <= 8'd128;
     else begin
-        {c0,c1,c2,c3,c4,c5,c6,c7} <= 8'b0;
+        {c0,c1,c2,c3,c4,c5,c6,c7} <= 8'd128;
         case (nxt_st)
             IDLE: c0 <= 1;
             READ: c1 <= 1;
@@ -114,9 +114,8 @@ module Cache #(
 
     always @(*) begin
         hit = 0;
-        miss = 0;
-        found = 0;
         and_val = 4'b0000;
+        found = 0;
         for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
             if (valid_array[index][i] && tag_array[index][i] == tag) begin
                 hit = 1;
@@ -125,8 +124,6 @@ module Cache #(
                 and_val[i] = 1;
             end
         end
-        if (!found)
-            miss = 1;
     end
 
     always @(posedge clk or posedge rst) begin
@@ -144,10 +141,12 @@ module Cache #(
             and_val <= 4'b0000;
             full <= 0;
             simulated_memory_data <= 512'h123456ABCD;
+            miss <= 0;
         end else begin
             dirty <= 4'b0000;
             read_data <= 0;
             ask_for_data <= 0;
+            miss <= 0;
 
             if ((c1 || c2) && hit && c3) begin
                 read_data <= data_array[index][hit_index];
@@ -162,10 +161,9 @@ module Cache #(
             if (c4) begin
                 ask_for_data <= 1;
                 simulated_memory_data <= {16{address}};
-		read_data <= simulated_memory_data;
+                read_data <= simulated_memory_data;
             end
 
-            // Recalculate full every cycle
             full <= 1;
             for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
                 if (!valid_array[index][i]) begin
@@ -189,15 +187,79 @@ module Cache #(
                         lru_counter[index][i] <= lru_counter[index][i] + 1;
                 lru_counter[index][replace_index] <= 0;
             end
+
+            if ((c1 && !hit) || (c2 && !hit)) begin
+                miss <= 1;
+            end
         end
     end
 endmodule
 
 
+module struct(
+    input clk,
+    input rst,
+    input bgn,
+    input write,
+    input read,
+    input [511:0] data,
+    input [31:0] address,
+    output [511:0] read_data,
+    output reg t0,t1,t2,t3,t4,t5,t6,t7,
+    output wire hit,
+    output wire miss,
+    output wire full,
+    output wire ask_for_data,
+    output reg [3:0] and_val,
+    output reg [3:0] dirty_bit_data,
+    output wire hit_bar
+);
+
+    wire temp_hit, temp_miss, temp_full, temp_ask;
+    wire [3:0] temp_and, temp_dirty;
+    wire c0, c1, c2, c3, c4, c5, c6, c7;
+
+    fsm control_i(
+        .clk(clk), .rst(rst), .bgn(bgn), .write(write), .read(read),
+        .hit(temp_hit), .miss(temp_miss), .full(temp_full),
+        .c0(c0), .c1(c1), .c2(c2), .c3(c3),
+        .c4(c4), .c5(c5), .c6(c6), .c7(c7)
+    );
+
+    Cache cache_i(
+        .clk(clk), .rst(rst), .data_to_write(data), .address(address),
+        .read(read), .write(write),
+        .c0(c0), .c1(c1), .c2(c2), .c3(c3),
+        .c4(c4), .c5(c5), .c6(c6), .c7(c7),
+        .read_data(read_data), .dirty(temp_dirty),
+        .and_val(temp_and), .hit(temp_hit), .miss(temp_miss),
+        .full(temp_full), .ask_for_data(temp_ask)
+    );
+
+    assign hit = temp_hit;
+    assign miss = temp_miss;
+    assign full = temp_full;
+    assign ask_for_data = temp_ask;
+    assign hit_bar = temp_hit;
+
+    always @(*) begin
+        t0 = c0;
+        t1 = c1;
+        t2 = c2;
+        t3 = c3;
+        t4 = c4;
+        t5 = c5;
+        t6 = c6;
+        t7 = c7;
+        and_val = temp_and;
+        dirty_bit_data = temp_dirty;
+    end
+endmodule
+
 //============================
 // tb.v (Testbench)
 //============================
-
+/*
 module tb;
     reg clk, rst, bgn;
     reg write, read;
@@ -210,7 +272,6 @@ module tb;
     wire [3:0] dirty, and_val;
     wire ask_for_data;
 
-    integer cycle_count = 0;
     integer hit_count = 0;
     integer miss_count = 0;
 
@@ -233,14 +294,126 @@ module tb;
         .full(full), .ask_for_data(ask_for_data)
     );
 
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+
+    initial begin
+        rst = 1;
+        bgn = 0; read = 0; write = 0;
+        address = 0;
+        data_to_write = 512'hA;
+        #20;
+        rst = 0;
+
+        // WRITE 1
+        #10;
+        address = 32'h00000000;
+        data_to_write = 512'hAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA;
+        bgn = 1; write = 1;
+        #60;
+        bgn = 0; write = 0;
+
+        // WRITE 2
+        #10;
+        address = 32'h00000010;
+        data_to_write = 512'hBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB;
+        bgn = 1; write = 1;
+        #60;
+        bgn = 0; write = 0;
+
+        // WRITE 3
+        #10;
+        address = 32'h00000020;
+        data_to_write = 512'hCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC;
+        bgn = 1; write = 1;
+        #60;
+        bgn = 0; write = 0;
+
+        // READ 1 (expect HIT)
+        #10;
+        address = 32'h00000000;
+        bgn = 1; read = 1;
+        #60;
+        bgn = 0; read = 0;
+
+        // READ 2 (expect HIT)
+        #10;
+        address = 32'h00000010;
+        bgn = 1; read = 1;
+        #60;
+        bgn = 0; read = 0;
+
+        // READ 3 (expect HIT)
+        #10;
+        address = 32'h00000020;
+        bgn = 1; read = 1;
+        #60;
+        bgn = 0; read = 0;
+
+        // Final report
+        #50;
+        $display("Simulation Finished");
+        $display("Total Hits: %0d | Total Misses: %0d", hit_count, miss_count);
+        $finish;
+    end
+
+    always @(posedge clk) begin
+        if (read && hit) hit_count = hit_count + 1;
+        if (write && miss) miss_count = miss_count + 1;
+        $display("HIT: %b | MISS: %b | FULL: %b | READ_DATA: %h | DIRTY: %b",
+                 hit, miss, full, read_data, dirty);
+    end
+endmodule
+*/
+
+module tb;
+    reg clk, rst, bgn;
+    reg write, read;
+    reg [31:0] address;
+    reg [511:0] data_to_write;
+
+    wire [511:0] read_data;
+    wire [3:0] dirty, and_val;
+    wire ask_for_data;
+    wire hit, miss;
+    wire full;
+    wire t0, t1, t2, t3, t4, t5, t6, t7;
+    wire hit_bar;
+
+    integer hit_count = 0;
+    integer miss_count = 0;
+
+    // Instan?ierea modulului struct (top-level wrapper)
+    struct uut_struct (
+        .clk(clk),
+        .rst(rst),
+        .bgn(bgn),
+        .write(write),
+        .read(read),
+        .data(data_to_write),
+        .address(address),
+        .read_data(read_data),
+        .t0(t0), .t1(t1), .t2(t2), .t3(t3),
+        .t4(t4), .t5(t5), .t6(t6), .t7(t7),
+        .hit_bar(hit_bar),
+        .and_val(and_val),
+        .dirty_bit_data(dirty),
+        .hit(hit),
+        .miss(miss),
+        .full(full),
+        .ask_for_data(ask_for_data)
+    );
+
     always #5 clk = ~clk;
 
     always @(posedge clk) begin
-        cycle_count = cycle_count + 1;
         if (hit) hit_count = hit_count + 1;
         if (miss) miss_count = miss_count + 1;
-        $display("Cycle: %0d | HIT: %b | MISS: %b | FULL: %b | ASK: %b | READ_DATA: %h | DIRTY: %b",
-                 cycle_count, hit, miss, full, ask_for_data, read_data, dirty);
+
+        $display("Time: %0t | HIT: %b | MISS: %b | FULL: %b | ASK: %b | READ_DATA: %h | DIRTY: %b",
+                 $time, hit, miss, full, ask_for_data, read_data, dirty);
     end
 
     initial begin
@@ -250,34 +423,30 @@ module tb;
         read = 0;
         write = 0;
         address = 0;
-        data_to_write = 512'hFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACEFACE;
+        data_to_write = 512'hA5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5;
 
         #20 rst = 0;
 
-        repeat (4) begin
-            @(posedge clk);
-            address = {19'd100 + cycle_count, 7'd0, 6'd0};
-            data_to_write = {64{cycle_count[7:0]}};
-            bgn = 1; write = 1;
-            #150;
-            bgn = 0; write = 0;
-        end
-
-        @(posedge clk);
-        address = {19'd200, 7'd0, 6'd0};
-        data_to_write = 512'hDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD;
+        // Scrie o valoare în cache
         bgn = 1; write = 1;
-        #150; bgn = 0; write = 0;
+        address = 32'h00001000;
+        data_to_write = 512'hDEADBEEF_DEADBEEF_DEADBEEF_DEADBEEF_DEADBEEF_DEADBEEF_DEADBEEF_DEADBEEF;
+        #100; bgn = 0; write = 0;
 
-        @(posedge clk);
-        address = {19'd101, 7'd0, 6'd0};
+        // Cite?te de dou? ori din acea adres? (al doilea ar trebui s? fie HIT)
+        #20;
         bgn = 1; read = 1;
-        #150; bgn = 0; read = 0;
+        address = 32'h00001000;
+        #100; bgn = 0; read = 0;
 
         #20;
-        $display("Simulation Finished");
-        $display("Total Hits: %0d | Total Misses: %0d", hit_count, miss_count);
-        $finish;
+        bgn = 1; read = 1;
+        address = 32'h00001000;
+        #100; bgn = 0; read = 0;
+
+        #20;
+        $display("Final HIT count: %0d | MISS count: %0d", hit_count, miss_count);
+        $stop;
     end
 endmodule
 
