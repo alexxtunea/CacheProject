@@ -1,5 +1,5 @@
 //============================
-// Cache.v (final fixed version with HIT logic fix)
+// Cache.v (COMPLETE: with all required FSM states)
 //============================
 
 module Cache #(
@@ -14,9 +14,7 @@ module Cache #(
     input [511:0] data_to_write,
     input read, write, bgn,
     output reg [511:0] read_data,
-    output reg [3:0] dirty,
-    output reg [3:0] and_val,
-    output reg hit, miss, full, ask_for_data,
+    output reg hit, miss,
     output reg [3:0] state_debug
 );
 
@@ -24,170 +22,137 @@ module Cache #(
     localparam INDEX_BITS = $clog2(NO_SETS);
     localparam TAG_BITS = 32 - OFFSET_BITS - INDEX_BITS;
 
-    localparam IDLE = 4'd0;
-    localparam CAPTURE_ADDR = 4'd1;
-    localparam READ = 4'd2;
-    localparam READ_WAIT = 4'd3;
-    localparam WRITE = 4'd4;
-    localparam WRITE_WAIT = 4'd5;
-    localparam READ_HIT = 4'd6;
-    localparam READ_MISS = 4'd7;
-    localparam WRITE_HIT = 4'd8;
-    localparam WRITE_MISS = 4'd9;
-    localparam CHECK = 4'd10;
-    localparam EVICT = 4'd11;
-    localparam EXIT = 4'd12;
-
-    reg [3:0] state, next_state;
+    reg [3:0] state;
+    localparam IDLE = 0,
+               READ_HIT = 1,
+               READ_MISS = 2,
+               WRITE_HIT = 3,
+               WRITE_MISS = 4,
+               EVICT = 5,
+               ALLOCATE = 6,
+               CAPTURE_ADDR = 7;
 
     reg [511:0] data_array [0:NO_SETS-1][0:ASSOCIATIVITY-1];
     reg [TAG_BITS-1:0] tag_array [0:NO_SETS-1][0:ASSOCIATIVITY-1];
     reg valid_array [0:NO_SETS-1][0:ASSOCIATIVITY-1];
     reg dirty_array [0:NO_SETS-1][0:ASSOCIATIVITY-1];
-    reg [1:0] lru_counter [0:NO_SETS-1][0:ASSOCIATIVITY-1];
+    reg [1:0] lru_array [0:NO_SETS-1][0:ASSOCIATIVITY-1];
 
-    reg [31:0] addr_reg;
-    reg [TAG_BITS-1:0] tag_reg;
-    reg [INDEX_BITS-1:0] index_reg;
-    reg [511:0] simulated_memory_data;
-    reg [1:0] hit_index, replace_index;
-    reg [3:0] local_and_val;
-    reg [1:0] local_hit_index;
+    reg [TAG_BITS-1:0] tag;
+    reg [INDEX_BITS-1:0] index;
     integer i, j;
 
-    wire hit_comb;
-    assign hit_comb = |local_and_val;
+    reg found;
+    reg [1:0] hit_idx, replace_idx;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             state <= IDLE;
-        end else begin
-            state <= next_state;
-        end
-    end
-
-    always @(*) begin
-        next_state = state;
-        case (state)
-            IDLE: if (bgn) next_state = CAPTURE_ADDR;
-            CAPTURE_ADDR: next_state = read ? READ : (write ? WRITE : IDLE);
-            READ: next_state = READ_WAIT;
-            READ_WAIT: next_state = hit_comb ? READ_HIT : READ_MISS;
-            WRITE: next_state = WRITE_WAIT;
-            WRITE_WAIT: next_state = hit_comb ? WRITE_HIT : WRITE_MISS;
-            READ_HIT, WRITE_HIT: next_state = IDLE;
-            READ_MISS, WRITE_MISS: next_state = CHECK;
-            CHECK: next_state = full ? EVICT : EXIT;
-            EVICT: next_state = EXIT;
-            EXIT: next_state = IDLE;
-            default: next_state = IDLE;
-        endcase
-    end
-
-    always @(*) begin
-        local_and_val = 4'b0000;
-        local_hit_index = 0;
-        for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
-            if (valid_array[index_reg][i] && tag_array[index_reg][i] == tag_reg) begin
-                local_and_val[i] = 1'b1;
-                local_hit_index = i[1:0];
-            end
-        end
-    end
-
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            for (i = 0; i < NO_SETS; i = i + 1)
+            hit <= 0;
+            miss <= 0;
+            read_data <= 0;
+            for (i = 0; i < NO_SETS; i = i + 1) begin
                 for (j = 0; j < ASSOCIATIVITY; j = j + 1) begin
                     valid_array[i][j] <= 0;
                     dirty_array[i][j] <= 0;
-                    lru_counter[i][j] <= 0;
+                    lru_array[i][j] <= j;
                 end
-            addr_reg <= 0;
-            tag_reg <= 0;
-            index_reg <= 0;
-            read_data <= 0;
-            and_val <= 0;
-            hit <= 0;
-            miss <= 0;
-            full <= 0;
-            ask_for_data <= 0;
-            dirty <= 0;
-            simulated_memory_data <= 512'h123456ABCD;
+            end
         end else begin
             case (state)
-                CAPTURE_ADDR: begin
-                    addr_reg <= address;
-                    tag_reg <= address[31 -: TAG_BITS];
-                    index_reg <= address[OFFSET_BITS +: INDEX_BITS];
-                end
-                READ, WRITE: begin
-                    and_val <= local_and_val;
-                    hit_index <= local_hit_index;
-                end
-                READ_WAIT, WRITE_WAIT: begin
-                    hit <= hit_comb;
-                    miss <= ~hit_comb;
-                end
-                READ_HIT: begin
-                    ask_for_data <= 0;
-                    read_data <= data_array[index_reg][hit_index];
-                    dirty <= {dirty_array[index_reg][3], dirty_array[index_reg][2], dirty_array[index_reg][1], dirty_array[index_reg][0]};
-                    for (i = 0; i < ASSOCIATIVITY; i = i + 1)
-                        if (lru_counter[index_reg][i] < lru_counter[index_reg][hit_index])
-                            lru_counter[index_reg][i] <= lru_counter[index_reg][i] + 1;
-                    lru_counter[index_reg][hit_index] <= 0;
-                end
-                WRITE_HIT: begin
-                    ask_for_data <= 0;
-                    data_array[index_reg][hit_index] <= data_to_write;
-                    dirty_array[index_reg][hit_index] <= 1;
-                    tag_array[index_reg][hit_index] <= tag_reg;
-                    valid_array[index_reg][hit_index] <= 1;
-                    for (i = 0; i < ASSOCIATIVITY; i = i + 1)
-                        if (lru_counter[index_reg][i] < lru_counter[index_reg][hit_index])
-                            lru_counter[index_reg][i] <= lru_counter[index_reg][i] + 1;
-                    lru_counter[index_reg][hit_index] <= 0;
-                end
-                READ_MISS, WRITE_MISS: begin
-                    ask_for_data <= 1;
-                    simulated_memory_data <= {16{addr_reg}};
-                end
-                CHECK: begin
-                    full <= 1;
-                    for (i = 0; i < ASSOCIATIVITY; i = i + 1)
-                        if (!valid_array[index_reg][i])
-                            full <= 0;
-                end
-                EVICT: begin
-                    for (i = 0; i < ASSOCIATIVITY; i = i + 1)
-                        if (lru_counter[index_reg][i] == ASSOCIATIVITY - 1)
-                            replace_index = i;
-                end
-                EXIT: begin
-                    data_array[index_reg][replace_index] <= simulated_memory_data;
-                    tag_array[index_reg][replace_index] <= tag_reg;
-                    valid_array[index_reg][replace_index] <= 1;
-                    dirty_array[index_reg][replace_index] <= write;
-                    for (i = 0; i < ASSOCIATIVITY; i = i + 1)
-                        if (lru_counter[index_reg][i] < lru_counter[index_reg][replace_index])
-                            lru_counter[index_reg][i] <= lru_counter[index_reg][i] + 1;
-                    lru_counter[index_reg][replace_index] <= 0;
-                end
-                default: begin
+                IDLE: begin
+                    if (bgn && (read || write)) begin
+                        tag <= address[31 -: TAG_BITS];
+                        index <= address[OFFSET_BITS +: INDEX_BITS];
+                        state <= CAPTURE_ADDR;
+                    end
                     hit <= 0;
                     miss <= 0;
-                    ask_for_data <= 0;
+                end
+
+                CAPTURE_ADDR: begin
+                    found = 0;
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (valid_array[index][i] && tag_array[index][i] == tag) begin
+                            found = 1;
+                            hit_idx = i;
+                        end
+                    end
+                    if (found) begin
+                        state <= read ? READ_HIT : WRITE_HIT;
+                    end else begin
+                        state <= read ? READ_MISS : WRITE_MISS;
+                    end
+                end
+
+                READ_HIT: begin
+                    hit <= 1;
+                    miss <= 0;
+                    read_data <= data_array[index][hit_idx];
+                    update_lru(index, hit_idx);
+                    state <= IDLE;
+                end
+
+                WRITE_HIT: begin
+                    hit <= 1;
+                    miss <= 0;
+                    data_array[index][hit_idx] <= data_to_write;
+                    dirty_array[index][hit_idx] <= 1;
+                    update_lru(index, hit_idx);
+                    state <= IDLE;
+                end
+
+                READ_MISS, WRITE_MISS: begin
+                    hit <= 0;
+                    miss <= 1;
+                    found = 0;
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1) begin
+                        if (!valid_array[index][i]) begin
+                            replace_idx = i;
+                            found = 1;
+                            state <= ALLOCATE;
+                        end
+                    end
+                    if (!found)
+                        state <= EVICT;
+                end
+
+                EVICT: begin
+                    for (i = 0; i < ASSOCIATIVITY; i = i + 1)
+                        if (lru_array[index][i] == ASSOCIATIVITY - 1)
+                            replace_idx = i;
+                    if (dirty_array[index][replace_idx]) begin
+                        $display("Evicting dirty block: SET %0d WAY %0d", index, replace_idx);
+                    end
+                    state <= ALLOCATE;
+                end
+
+                ALLOCATE: begin
+                    tag_array[index][replace_idx] <= tag;
+                    data_array[index][replace_idx] <= write ? data_to_write : 512'hCAFEBABE;
+                    valid_array[index][replace_idx] <= 1;
+                    dirty_array[index][replace_idx] <= write;
+                    update_lru(index, replace_idx);
+                    state <= IDLE;
                 end
             endcase
         end
-    end
-
-    always @(posedge clk) begin
         state_debug <= state;
     end
+
+    task update_lru(input [INDEX_BITS-1:0] set_idx, input [1:0] used_way);
+        integer k;
+        begin
+            for (k = 0; k < ASSOCIATIVITY; k = k + 1) begin
+                if (lru_array[set_idx][k] < lru_array[set_idx][used_way])
+                    lru_array[set_idx][k] <= lru_array[set_idx][k] + 1;
+            end
+            lru_array[set_idx][used_way] <= 0;
+        end
+    endtask
+
 endmodule
-  
+
 
 //============================
 // struct.v
@@ -204,10 +169,6 @@ module struct(
     output [511:0] read_data,
     output wire hit,
     output wire miss,
-    output wire full,
-    output wire ask_for_data,
-    output wire [3:0] and_val,
-    output wire [3:0] dirty_bit_data,
     output wire [3:0] state_debug
 );
 
@@ -222,10 +183,6 @@ module struct(
         .read_data(read_data),
         .hit(hit),
         .miss(miss),
-        .full(full),
-        .ask_for_data(ask_for_data),
-        .and_val(and_val),
-        .dirty(dirty_bit_data),
         .state_debug(state_debug)
     );
 
@@ -233,7 +190,7 @@ endmodule
 
 
 //============================
-// tb.v
+// tb.v (extended to test eviction)
 //============================
 
 module tb;
@@ -241,8 +198,7 @@ module tb;
     reg [511:0] data;
     reg [31:0] address;
     wire [511:0] read_data;
-    wire hit, miss, full, ask_for_data;
-    wire [3:0] dirty, and_val;
+    wire hit, miss;
     wire [3:0] state_debug;
 
     struct dut(
@@ -256,14 +212,10 @@ module tb;
         .read_data(read_data),
         .hit(hit),
         .miss(miss),
-        .full(full),
-        .ask_for_data(ask_for_data),
-        .and_val(and_val),
-        .dirty_bit_data(dirty),
         .state_debug(state_debug)
     );
 
-    integer hit_count = 0, miss_count = 0;
+    integer hit_count = 0, miss_count = 0, i;
     always #5 clk = ~clk;
 
     always @(posedge clk) begin
@@ -272,28 +224,25 @@ module tb;
     end
 
     initial begin
-        clk = 0; rst = 1; bgn = 0; write = 0; read = 0; address = 0; data = 512'h0;
+        clk = 0; rst = 1; bgn = 0; read = 0; write = 0; address = 0; data = 0;
         #20 rst = 0;
 
-        // Write 1
-        bgn = 1; write = 1; address = 32'h00001000; data = 512'hDEADBEEF;
-        #100; bgn = 0; write = 0;
+        // Fill a set fully
+        for (i = 0; i < 4; i = i + 1) begin
+            @(posedge clk); bgn = 1; write = 1; address = {20'd1, 7'd0, 5'(i * 16)}; data = i;
+            @(posedge clk); bgn = 0; write = 0;
+            repeat (2) @(posedge clk);
+        end
 
-        // Read HIT
-        #20; bgn = 1; read = 1; address = 32'h00001000;
-        #100; bgn = 0; read = 0;
+        // Trigger eviction
+        @(posedge clk); bgn = 1; write = 1; address = {20'd2, 7'd0, 5'd0}; data = 5;
+        @(posedge clk); bgn = 0; write = 0;
+        repeat (2) @(posedge clk);
 
-        // Read MISS
-        #20; bgn = 1; read = 1; address = 32'h00002000;
-        #100; bgn = 0; read = 0;
-
-        // Write 2 (different address)
-        #20; bgn = 1; write = 1; address = 32'h00003000; data = 512'hABCDEFABCDEF;
-        #100; bgn = 0; write = 0;
-
-        // Read HIT again
-        #20; bgn = 1; read = 1; address = 32'h00001000;
-        #100; bgn = 0; read = 0;
+        // Access one of the older entries to check LRU
+        @(posedge clk); bgn = 1; read = 1; address = {20'd1, 7'd0, 5'd0};
+        @(posedge clk); bgn = 0; read = 0;
+        repeat (2) @(posedge clk);
 
         $display("Final Hits = %0d, Misses = %0d", hit_count, miss_count);
         $finish;
