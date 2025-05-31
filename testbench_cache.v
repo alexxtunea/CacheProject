@@ -1,5 +1,5 @@
 //============================
-// Cache.v (UPDATED: From WRITE_MISS, go to EVICT if dirty = 1, display dirty bit)
+// Cache.v - updated: Removed ALLOCATE_READ state + Added debug in CAPTURE_ADDR
 //============================
 
 module Cache #(
@@ -17,14 +17,14 @@ module Cache #(
     output reg hit, miss,
     output reg [3:0] state_debug
 );
-    localparam OFFSET_BITS = $clog2(BLOCK_SIZE);
-    localparam INDEX_BITS = $clog2(NO_SETS);
-    localparam TAG_BITS = 32 - OFFSET_BITS - INDEX_BITS;
+    localparam OFFSET_BITS = 6;
+    localparam INDEX_BITS = 7;
+    localparam TAG_BITS = 32 - OFFSET_BITS - INDEX_BITS; // 19
 
     reg [3:0] state;
     localparam IDLE = 0, READ_HIT = 1, READ_MISS = 2, WRITE_HIT = 3,
-               WRITE_MISS = 4, EVICT = 5, ALLOCATE_READ = 6,
-               ALLOCATE_WRITE = 7, CAPTURE_ADDR = 8;
+               WRITE_MISS = 4, EVICT = 5,
+               ALLOCATE_WRITE = 6, CAPTURE_ADDR = 7;
 
     reg [511:0] data_array [0:NO_SETS-1][0:ASSOCIATIVITY-1];
     reg [TAG_BITS-1:0] tag_array [0:NO_SETS-1][0:ASSOCIATIVITY-1];
@@ -37,6 +37,7 @@ module Cache #(
     reg found;
     reg [1:0] hit_way, replace_idx;
     reg is_read_pending;
+    reg [511:0] simulated_memory_data;
     integer i, j;
 
     always @(posedge clk or posedge rst) begin
@@ -46,6 +47,7 @@ module Cache #(
             miss <= 0;
             is_read_pending <= 0;
             read_data <= 0;
+            simulated_memory_data <= 512'hCAFEBABE;
             for (i = 0; i < NO_SETS; i = i + 1)
                 for (j = 0; j < ASSOCIATIVITY; j = j + 1) begin
                     valid_array[i][j] <= 0;
@@ -58,7 +60,7 @@ module Cache #(
             case (state)
                 IDLE: begin
                     if (bgn && (read || write)) begin
-                        tag <= address[31 -: TAG_BITS];
+                        tag <= address[31:32-TAG_BITS];
                         index <= address[OFFSET_BITS +: INDEX_BITS];
                         is_read_pending <= read;
                         state <= CAPTURE_ADDR;
@@ -97,7 +99,15 @@ module Cache #(
                     state <= IDLE;
                 end
 
-                READ_MISS, WRITE_MISS: begin
+                READ_MISS: begin
+                    hit <= 0;
+                    miss <= 1;
+                    read_data <= simulated_memory_data;
+                    $display("READ MISS: tag=%0h index=%0d - returning simulated %h", tag, index, simulated_memory_data);
+                    state <= IDLE;
+                end
+
+                WRITE_MISS: begin
                     hit <= 0;
                     miss <= 1;
                     found = 0;
@@ -106,26 +116,24 @@ module Cache #(
                             replace_idx = i;
                             found = 1;
                         end
-                    if (!found && !is_read_pending && dirty_array[index][get_lru(index)])
+
+                    if (found) begin
+                        state <= ALLOCATE_WRITE;
+                    end else begin
                         state <= EVICT;
-                    else
-                        state <= found ? (state == READ_MISS ? ALLOCATE_READ : ALLOCATE_WRITE) : EVICT;
+                    end
                 end
 
                 EVICT: begin
                     replace_idx = get_lru(index);
-                    $display("Evicting block: SET %0d WAY %0d (TAG = %h, DIRTY = %b)", index, replace_idx, tag_array[index][replace_idx], dirty_array[index][replace_idx]);
-                    state <= is_read_pending ? ALLOCATE_READ : ALLOCATE_WRITE;
-                end
-
-                ALLOCATE_READ: begin
-                    tag_array[index][replace_idx] <= tag;
-                    data_array[index][replace_idx] <= 512'hCAFEBABE;
-                    valid_array[index][replace_idx] <= 1;
+                    $display("Evicting block: SET %0d WAY %0d (TAG = %h, DIRTY = %b)", 
+                             index, replace_idx, tag_array[index][replace_idx], dirty_array[index][replace_idx]);
+                    if (dirty_array[index][replace_idx]) begin
+                        $display("Writing back dirty block: SET %0d WAY %0d DATA = %h", 
+                                 index, replace_idx, data_array[index][replace_idx]);
+                    end
                     dirty_array[index][replace_idx] <= 0;
-                    update_lru(index, replace_idx);
-                    $display("ALLOCATE READ: tag %0h to set %0d way %0d DIRTY=%0b", tag, index, replace_idx, dirty_array[index][replace_idx]);
-                    state <= IDLE;
+                    state <= is_read_pending ? IDLE : ALLOCATE_WRITE;
                 end
 
                 ALLOCATE_WRITE: begin
@@ -164,8 +172,9 @@ module Cache #(
 
 endmodule
 
+
 //============================
-// struct.v ? wrapper to instantiate Cache
+// struct.v - wrapper module
 //============================
 module struct(
     input clk, rst, bgn, write, read,
@@ -184,8 +193,9 @@ module struct(
     );
 endmodule
 
+
 //============================
-// tb.v ? testbench to validate WRITE_BACK + EVICT
+// tb.v - testbench with extended read test cases
 //============================
 module tb;
     reg clk = 0, rst, bgn, read, write;
@@ -205,6 +215,7 @@ module tb;
 
     integer hit_count = 0, miss_count = 0;
     always #5 clk = ~clk;
+
     always @(posedge clk) begin
         if (hit) hit_count = hit_count + 1;
         if (miss) miss_count = miss_count + 1;
@@ -214,29 +225,42 @@ module tb;
         rst = 1; bgn = 0; read = 0; write = 0;
         #15 rst = 0;
 
-        // Fill up set 5 fully with deterministic tags
-        @(posedge clk); bgn = 1; write = 1; address = {20'd100, 7'd5, 5'd0}; data = 32'hAAAA_AAAA;
+        // Fill set 5 with 4 tags
+        @(posedge clk); bgn = 1; write = 1; address = {19'd10, 7'd5, 6'd0}; data = 32'hAAAA_AAAA;
         @(posedge clk); bgn = 0; write = 0; repeat(2) @(posedge clk);
 
-        @(posedge clk); bgn = 1; write = 1; address = {20'd101, 7'd5, 5'd0}; data = 32'hBBBB_BBBB;
+        @(posedge clk); bgn = 1; write = 1; address = {19'd11, 7'd5, 6'd0}; data = 32'hBBBB_BBBB;
         @(posedge clk); bgn = 0; write = 0; repeat(2) @(posedge clk);
 
-        @(posedge clk); bgn = 1; write = 1; address = {20'd102, 7'd5, 5'd0}; data = 32'hCCCC_CCCC;
+        @(posedge clk); bgn = 1; write = 1; address = {19'd12, 7'd5, 6'd0}; data = 32'hCCCC_CCCC;
         @(posedge clk); bgn = 0; write = 0; repeat(2) @(posedge clk);
 
-        @(posedge clk); bgn = 1; write = 1; address = {20'd103, 7'd5, 5'd0}; data = 32'hDDDD_DDDD;
+        @(posedge clk); bgn = 1; write = 1; address = {19'd13, 7'd5, 6'd0}; data = 32'hDDDD_DDDD;
         @(posedge clk); bgn = 0; write = 0; repeat(2) @(posedge clk);
 
-        // Make one block dirty by writing again
-        @(posedge clk); bgn = 1; write = 1; address = {20'd100, 7'd5, 5'd0}; data = 32'hDADADADA;
+        // Re-read all 4 to check for hits
+        @(posedge clk); bgn = 1; read = 1; address = {19'd10, 7'd5, 6'd0};
+        @(posedge clk); bgn = 0; read = 0; repeat(2) @(posedge clk);
+
+        @(posedge clk); bgn = 1; read = 1; address = {19'd11, 7'd5, 6'd0};
+        @(posedge clk); bgn = 0; read = 0; repeat(2) @(posedge clk);
+
+        @(posedge clk); bgn = 1; read = 1; address = {19'd12, 7'd5, 6'd0};
+        @(posedge clk); bgn = 0; read = 0; repeat(2) @(posedge clk);
+
+        @(posedge clk); bgn = 1; read = 1; address = {19'd13, 7'd5, 6'd0};
+        @(posedge clk); bgn = 0; read = 0; repeat(2) @(posedge clk);
+
+        // Trigger eviction
+        @(posedge clk); bgn = 1; write = 1; address = {19'd20, 7'd5, 6'd0}; data = 32'hEFEFEFEF;
         @(posedge clk); bgn = 0; write = 0; repeat(2) @(posedge clk);
 
-        // Cause a WRITE_MISS that triggers eviction
-        @(posedge clk); bgn = 1; write = 1; address = {20'd200, 7'd5, 5'd0}; data = 32'hAFAFAFAF;
-        @(posedge clk); bgn = 0; write = 0; repeat(2) @(posedge clk);
+        // Read evicted block -> miss
+        @(posedge clk); bgn = 1; read = 1; address = {19'd11, 7'd5, 6'd0};
+        @(posedge clk); bgn = 0; read = 0; repeat(2) @(posedge clk);
 
-        // Read the evicted address again (should miss)
-        @(posedge clk); bgn = 1; read = 1; address = {20'd100, 7'd5, 5'd0};
+        // Final read (should hit)
+        @(posedge clk); bgn = 1; read = 1; address = {19'd20, 7'd5, 6'd0};
         @(posedge clk); bgn = 0; read = 0; repeat(2) @(posedge clk);
 
         $display("Final Hits = %0d, Misses = %0d", hit_count, miss_count);
